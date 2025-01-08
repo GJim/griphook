@@ -43,5 +43,7 @@ pub struct Trade {
 }
 
 impl Avro for Trade {
-    fn raw_schema() -> &'static str { RAW_SCHEMA }
+    fn raw_schema() -> &'static str {
+        RAW_SCHEMA
+    }
 }

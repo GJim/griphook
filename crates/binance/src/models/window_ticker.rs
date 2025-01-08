@@ -67,5 +67,7 @@ pub struct WindowTicker {
 }
 
 impl Avro for WindowTicker {
-    fn raw_schema() -> &'static str { RAW_SCHEMA }
+    fn raw_schema() -> &'static str {
+        RAW_SCHEMA
+    }
 }

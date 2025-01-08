@@ -5,18 +5,18 @@ use super::Avro;
 pub const RAW_SCHEMA: &str = r#"
 {
     "type": "record",
-    "name": "Kline",
+    "name": "ContinuousKline",
     "fields": [
         {"name": "e", "type": "string"},
         {"name": "E", "type": "long"},
-        {"name": "s", "type": "string"},
+        {"name": "ps", "type": "string"},
+        {"name": "ct", "type": "string"},
         {"name": "k", "type": {
             "type": "record",
-            "name": "KlineData",
+            "name": "ContinuousKlineData",
             "fields": [
                 {"name": "t", "type": "long"},
                 {"name": "T", "type": "long"},
-                {"name": "s", "type": "string"},
                 {"name": "i", "type": "string"},
                 {"name": "f", "type": "long"},
                 {"name": "L", "type": "long"},
@@ -38,31 +38,31 @@ pub const RAW_SCHEMA: &str = r#"
 "#;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Kline {
+pub struct ContinuousKline {
     #[serde(rename = "e")]
     pub event_type: String,
     #[serde(rename = "E")]
     pub event_time: i64,
-    #[serde(rename = "s")]
-    pub symbol: String,
+    #[serde(rename = "ps")]
+    pub pair: String,
+    #[serde(rename = "ct")]
+    pub contract_type: String,
     #[serde(rename = "k")]
-    pub kline: KlineData,
+    pub kline: ContinuousKlineData,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct KlineData {
+pub struct ContinuousKlineData {
     #[serde(rename = "t")]
     pub start_time: i64,
     #[serde(rename = "T")]
     pub close_time: i64,
-    #[serde(rename = "s")]
-    pub symbol: String,
     #[serde(rename = "i")]
     pub interval: String,
     #[serde(rename = "f")]
-    pub first_trade_id: i64,
+    pub first_update_id: i64,
     #[serde(rename = "L")]
-    pub last_trade_id: i64,
+    pub last_update_id: i64,
     #[serde(rename = "o")]
     pub open_price: String,
     #[serde(rename = "c")]
@@ -72,22 +72,22 @@ pub struct KlineData {
     #[serde(rename = "l")]
     pub low_price: String,
     #[serde(rename = "v")]
-    pub base_asset_volume: String,
+    pub volume: String,
     #[serde(rename = "n")]
     pub number_of_trades: i64,
     #[serde(rename = "x")]
     pub is_closed: bool,
     #[serde(rename = "q")]
-    pub quote_asset_volume: String,
+    pub quote_volume: String,
     #[serde(rename = "V")]
-    pub taker_buy_base_volume: String,
+    pub taker_buy_volume: String,
     #[serde(rename = "Q")]
     pub taker_buy_quote_volume: String,
     #[serde(rename = "B")]
     pub ignore: String,
 }
 
-impl Avro for Kline {
+impl Avro for ContinuousKline {
     fn raw_schema() -> &'static str {
         RAW_SCHEMA
     }

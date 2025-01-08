@@ -38,23 +38,33 @@ impl Default for LogConfig {
 impl LogConfig {
     #[inline]
     #[must_use]
-    pub fn default_log_filters() -> String { "info".to_string() }
+    pub fn default_log_filters() -> String {
+        "info".to_string()
+    }
 
     #[inline]
     #[must_use]
-    pub const fn default_file_path() -> Option<PathBuf> { None }
+    pub const fn default_file_path() -> Option<PathBuf> {
+        None
+    }
 
     #[inline]
     #[must_use]
-    pub const fn default_emit_journald() -> bool { false }
+    pub const fn default_emit_journald() -> bool {
+        false
+    }
 
     #[inline]
     #[must_use]
-    pub const fn default_emit_stdout() -> bool { true }
+    pub const fn default_emit_stdout() -> bool {
+        true
+    }
 
     #[inline]
     #[must_use]
-    pub const fn default_emit_stderr() -> bool { false }
+    pub const fn default_emit_stderr() -> bool {
+        false
+    }
 
     pub fn registry(&self) {
         let Self { emit_journald, file_path, emit_stdout, emit_stderr, log_filters } = self;

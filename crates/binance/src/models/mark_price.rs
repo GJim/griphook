@@ -5,35 +5,42 @@ use super::Avro;
 pub const RAW_SCHEMA: &str = r#"
 {
     "type": "record",
-    "name": "AvgPrice",
+    "name": "MarkPrice",
     "fields": [
         {"name": "e", "type": "string"},
         {"name": "E", "type": "long"},
         {"name": "s", "type": "string"},
+        {"name": "p", "type": "string"},
         {"name": "i", "type": "string"},
-        {"name": "w", "type": "string"},
+        {"name": "P", "type": "string"},
+        {"name": "r", "type": "string"},
         {"name": "T", "type": "long"}
     ]
 }
 "#;
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AvgPrice {
+pub struct MarkPrice {
     #[serde(rename = "e")]
     pub event_type: String,
     #[serde(rename = "E")]
     pub event_time: i64,
     #[serde(rename = "s")]
     pub symbol: String,
+    #[serde(rename = "p")]
+    pub mark_price: String,
     #[serde(rename = "i")]
-    pub interval: String,
-    #[serde(rename = "w")]
-    pub average_price: String,
+    pub index_price: String,
+    #[serde(rename = "P")]
+    pub estimated_settle_price: String,
+    #[serde(rename = "r")]
+    pub funding_rate: String,
     #[serde(rename = "T")]
-    pub last_trade_time: i64,
+    pub next_funding_time: i64,
 }
 
-impl Avro for AvgPrice {
+impl Avro for MarkPrice {
     fn raw_schema() -> &'static str {
         RAW_SCHEMA
     }

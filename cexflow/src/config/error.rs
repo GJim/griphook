@@ -37,5 +37,7 @@ pub enum Error {
 }
 
 impl From<rdkafka::error::KafkaError> for Error {
-    fn from(err: rdkafka::error::KafkaError) -> Self { Self::KafkaProducer { source: err } }
+    fn from(err: rdkafka::error::KafkaError) -> Self {
+        Self::KafkaProducer { source: err }
+    }
 }

@@ -78,5 +78,7 @@ pub struct PartialBookDepth {
 }
 
 impl Avro for PartialBookDepth {
-    fn raw_schema() -> &'static str { RAW_SCHEMA }
+    fn raw_schema() -> &'static str {
+        RAW_SCHEMA
+    }
 }

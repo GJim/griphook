@@ -51,11 +51,12 @@ impl Commands {
             Self::TradeStream => {
                 let producer = config.kafka.create_producer()?;
                 let subscription_endpoint = config.binance.subscription_endpoint()?;
+                let trading_type = config.binance.trading_type.to_string();
 
                 Toplevel::new(|s| async move {
-                    let _unused = s
-                        .start(SubsystemBuilder::new("binance-trade-stream", move |h| {
-                            griphook_binance::run(subscription_endpoint, producer, h)
+                    let _unused =
+                        s.start(SubsystemBuilder::new("binance-trade-stream", move |h| {
+                            griphook_binance::run(trading_type, subscription_endpoint, producer, h)
                         }));
                 })
                 .catch_signals()
@@ -146,6 +147,32 @@ impl Commands {
                                 )
                             },
                         )),
+                        StreamType::ForceOrder => s.start(SubsystemBuilder::new(
+                            "binance-forceorder-inspector",
+                            move |h| {
+                                griphook_binance::inspector::run::<griphook_binance::ForceOrder>(
+                                    consumer, topic, h,
+                                )
+                            },
+                        )),
+                        StreamType::MarkPrice => s.start(SubsystemBuilder::new(
+                            "binance-markprice-inspector",
+                            move |h| {
+                                griphook_binance::inspector::run::<griphook_binance::MarkPrice>(
+                                    consumer, topic, h,
+                                )
+                            },
+                        )),
+                        StreamType::ContinuousKline => {
+                            s.start(SubsystemBuilder::new(
+                                "binance-continuouskline-inspector",
+                                move |h| {
+                                    griphook_binance::inspector::run::<
+                                        griphook_binance::ContinuousKline,
+                                    >(consumer, topic, h)
+                                },
+                            ))
+                        }
                     };
                 })
                 .catch_signals()
@@ -166,6 +193,8 @@ fn extract_stream_type(input: &str) -> Result<String, Error> {
             return Ok("windowticker".to_string());
         } else if stream_type.contains("depth") && stream_type.len() > 5 {
             return Ok("partialbookdepth".to_string());
+        } else if stream_type.contains("continuouskline_") {
+            return Ok("continuouskline".to_string());
         } else if stream_type.contains("kline") {
             return Ok("kline".to_string());
         }
@@ -181,7 +210,10 @@ enum StreamType {
     AvgPrice,
     BookDepth,
     BookTicker,
+    ContinuousKline,
     Kline,
+    ForceOrder,
+    MarkPrice,
     MiniTicker,
     PartialBookDepth,
     Ticker,
@@ -204,6 +236,9 @@ impl TryFrom<&String> for StreamType {
             "partialbookdepth" => Ok(Self::PartialBookDepth),
             "ticker" => Ok(Self::Ticker),
             "windowticker" => Ok(Self::WindowTicker),
+            "forceorder" => Ok(Self::ForceOrder),
+            "markprice" => Ok(Self::MarkPrice),
+            "continuouskline" => Ok(Self::ContinuousKline),
             _ => Err(Error::InvalidStreamTopic { topic: value.to_string() }),
         }
     }

@@ -16,6 +16,7 @@ use crate::{
 
 #[allow(clippy::missing_errors_doc)]
 pub async fn run(
+    trading_type: String,
     subscription_endpoint: http::Uri,
     producer: FutureProducer,
     subsys: SubsystemHandle,
@@ -40,7 +41,7 @@ pub async fn run(
 
                             tracing::debug!("Deserialized message: {event_message:?}");
 
-                            let topic = event_message.topic()?;
+                            let topic = event_message.topic(&trading_type)?;
                             let sequence_id = event_message.data.sequence_id();
                             let payload = event_message.data.to_compressed_message()?;
 

@@ -44,10 +44,16 @@ pub struct AggTrade {
     pub trade_time: i64,
     #[serde(rename = "m")]
     pub is_buyer_market_maker: bool,
-    #[serde(rename = "M")]
+    #[serde(rename = "M", default = "default_ignore")]
     pub ignore: bool,
 }
 
+const fn default_ignore() -> bool {
+    false
+}
+
 impl Avro for AggTrade {
-    fn raw_schema() -> &'static str { RAW_SCHEMA }
+    fn raw_schema() -> &'static str {
+        RAW_SCHEMA
+    }
 }

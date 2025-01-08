@@ -63,5 +63,7 @@ pub struct BookDepth {
 }
 
 impl Avro for BookDepth {
-    fn raw_schema() -> &'static str { RAW_SCHEMA }
+    fn raw_schema() -> &'static str {
+        RAW_SCHEMA
+    }
 }

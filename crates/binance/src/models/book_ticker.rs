@@ -34,5 +34,7 @@ pub struct BookTicker {
 }
 
 impl Avro for BookTicker {
-    fn raw_schema() -> &'static str { RAW_SCHEMA }
+    fn raw_schema() -> &'static str {
+        RAW_SCHEMA
+    }
 }

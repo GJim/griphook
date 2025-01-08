@@ -10,12 +10,12 @@ pub use consumer::inspector;
 pub use error::Error;
 use error::{AvroSerializationSnafu, Result};
 pub use models::{
-    AggTrade, AvgPrice, Avro, BookDepth, BookTicker, Kline, MiniTicker, PartialBookDepth, Ticker,
-    Trade, WindowTicker,
+    AggTrade, AvgPrice, Avro, BookDepth, BookTicker, ContinuousKline, ForceOrder, Kline, MarkPrice,
+    MiniTicker, PartialBookDepth, Ticker, Trade, WindowTicker,
 };
 pub use producer::run;
 
-const CEX_TOPIC_PREFIX: &str = "binance";
+const CEX_NAME: &str = "binance";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EventMessage {
@@ -27,14 +27,14 @@ pub struct EventMessage {
 
 impl EventMessage {
     #[allow(clippy::missing_errors_doc)]
-    pub fn topic(&self) -> Result<String> {
+    pub fn topic(&self, trading_type: &str) -> Result<String> {
         let parts: Vec<&str> = self.stream.split('@').collect();
         if parts.len() < 2 {
             return Err(Error::UnsupportedStreamType { stream_type: self.stream.clone() });
         }
         let symbol = parts[0].to_lowercase();
         let stream_type = parts[1].to_lowercase();
-        Ok(format!("{CEX_TOPIC_PREFIX}.{symbol}.{stream_type}"))
+        Ok(format!("{CEX_NAME}-{trading_type}.{symbol}.{stream_type}"))
     }
 }
 
@@ -45,13 +45,16 @@ pub enum Event {
     AvgPrice(AvgPrice),
     BookDepth(BookDepth),
     BookTicker(BookTicker),
+    ContinuousKline(ContinuousKline),
     Kline(Kline),
+    ForceOrder(ForceOrder),
     PartialBookDepth(PartialBookDepth),
     Trade(Trade),
     // Deserialize order: [ticker > window_ticker > mini_ticker]
     Ticker(Ticker),
     WindowTicker(WindowTicker),
     MiniTicker(MiniTicker),
+    MarkPrice(MarkPrice),
 }
 
 impl Event {
@@ -68,6 +71,9 @@ impl Event {
             Self::Ticker(e) => e.event_time,
             Self::Trade(e) => e.event_time,
             Self::WindowTicker(e) => e.event_time,
+            Self::ForceOrder(e) => e.event_time,
+            Self::MarkPrice(e) => e.event_time,
+            Self::ContinuousKline(e) => e.event_time,
         };
 
         event_time.to_le_bytes()
@@ -86,6 +92,9 @@ impl Event {
             Self::Ticker(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
             Self::Trade(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
             Self::WindowTicker(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
+            Self::ForceOrder(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
+            Self::MarkPrice(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
+            Self::ContinuousKline(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
         }
     }
 }
