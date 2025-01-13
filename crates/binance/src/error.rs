@@ -56,4 +56,25 @@ pub enum Error {
 
     #[snafu(display("Unsupported stream type: {stream_type}"))]
     UnsupportedStreamType { stream_type: String },
+
+    #[snafu(display("ClickHouse error: {source}, location: {location}"))]
+    Clickhouse {
+        source: clickhouse::error::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("PostgreSQL error: {source}, location: {location}"))]
+    Postgres {
+        source: sqlx::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Model error: {source}, location: {location}"))]
+    Model {
+        source: crate::models::error::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

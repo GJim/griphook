@@ -25,6 +25,12 @@ pub enum Error {
 
     #[snafu(display("Invalid stream topic: {topic}"))]
     InvalidStreamTopic { topic: String },
+
+    #[snafu(display("Unsupported stream type: {stream_type}"))]
+    UnsupportedStreamType { stream_type: String },
+
+    #[snafu(display("Unsupported storage: {storage}"))]
+    UnsupportedStorage { storage: String },
 }
 
 impl From<config::Error> for Error {
@@ -52,7 +58,10 @@ pub trait CommandError {
 impl CommandError for Error {
     fn exit_code(&self) -> exitcode::ExitCode {
         match self {
-            Self::Config { .. } | Self::InvalidStreamTopic { .. } => exitcode::CONFIG,
+            Self::Config { .. }
+            | Self::InvalidStreamTopic { .. }
+            | Self::UnsupportedStreamType { .. }
+            | Self::UnsupportedStorage { .. } => exitcode::CONFIG,
             Self::Binance { .. } => exitcode::SOFTWARE,
             Self::InitializeTokioRuntime { .. } | Self::ShutdownTokioRuntime { .. } => {
                 exitcode::IOERR

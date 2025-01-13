@@ -34,6 +34,9 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Error occurs while connecting to Postgres, error: {source}"))]
+    ConnectPostgres { source: sqlx::Error },
 }
 
 impl From<rdkafka::error::KafkaError> for Error {

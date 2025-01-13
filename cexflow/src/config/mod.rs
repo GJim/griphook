@@ -1,7 +1,9 @@
 mod binance;
+mod clickhouse;
 pub mod error;
 mod kafka;
 mod log;
+mod postgres;
 
 use std::path::{Path, PathBuf};
 
@@ -22,6 +24,12 @@ pub struct Config {
 
     #[serde(default)]
     pub binance: BinanceConfig,
+
+    #[serde(default)]
+    pub clickhouse: clickhouse::ClickhouseConfig,
+
+    #[serde(default)]
+    pub postgres: postgres::PostgresConfig,
 }
 
 #[allow(dead_code)]

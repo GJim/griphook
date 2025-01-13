@@ -28,8 +28,10 @@ tokio-graceful-shutdown = { workspace = true }
 tracing = { workspace = true }
 
 avro-rs = { workspace = true }
+clickhouse = { workspace = true }
 http = { workspace = true }
 rdkafka = { workspace = true }
+sqlx = { workspace = true }
 
 snafu = { workspace = true }
 

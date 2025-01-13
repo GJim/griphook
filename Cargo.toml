@@ -44,11 +44,22 @@ tokio-tungstenite = { version = "0.26", features = ["url", "native-tls"] }
 rdkafka = { version = "0.37", features = ["cmake-build", "zstd"] }
 avro-rs = "0.13"
 
+# Storage
+clickhouse = { version = "0.13", features = ["lz4"] }
+sqlx = { version = "0.8", features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "migrate",
+  "macros",
+  "time",
+] }
+
 # MISC
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
-directories = "5"
+directories = "6"
 exitcode = "1"
 http = "1"
 http-serde = "2"

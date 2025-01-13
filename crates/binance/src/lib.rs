@@ -2,18 +2,52 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 
 mod consumer;
+// mod database;
 mod error;
 mod models;
 mod producer;
 
-pub use consumer::inspector;
+pub use consumer::{inspector, sink::Consumer};
+// pub use database::clickhouse::ClickHouseDatabase;
 pub use error::Error;
 use error::{AvroSerializationSnafu, Result};
 pub use models::{
     AggTrade, AvgPrice, Avro, BookDepth, BookTicker, ContinuousKline, ForceOrder, Kline, MarkPrice,
-    MiniTicker, PartialBookDepth, Ticker, Trade, WindowTicker,
+    MiniTicker, PartialBookDepth, Ticker, Trade, TradeRow, WindowTicker,
 };
 pub use producer::run;
+
+pub struct ClickhouseDB {
+    client: clickhouse::Client,
+}
+
+impl ClickhouseDB {
+    #[must_use]
+    pub const fn new(client: clickhouse::Client) -> Self {
+        Self { client }
+    }
+}
+
+pub struct PostgresDB {
+    client: sqlx::PgPool,
+}
+
+impl PostgresDB {
+    #[must_use]
+    pub const fn new(client: sqlx::PgPool) -> Self {
+        Self { client }
+    }
+}
+
+pub trait Database<T, U> {
+    /// Ensures the table exists in the database.
+    async fn ensure_table_exists(&self, table_name: &str) -> models::error::Result<()>;
+
+    async fn to_row(&self, data: T) -> models::error::Result<U>;
+
+    /// Inserts a row into the database.
+    async fn insert_row(&self, table_name: &str, data: U) -> models::error::Result<()>;
+}
 
 const CEX_NAME: &str = "binance";
 
@@ -34,7 +68,7 @@ impl EventMessage {
         }
         let symbol = parts[0].to_lowercase();
         let stream_type = parts[1].to_lowercase();
-        Ok(format!("{CEX_NAME}-{trading_type}.{symbol}.{stream_type}"))
+        Ok(format!("{CEX_NAME}.{trading_type}.{symbol}.{stream_type}"))
     }
 }
 

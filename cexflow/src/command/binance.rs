@@ -1,5 +1,6 @@
 use clap::{Subcommand, ValueEnum};
 use snafu::ResultExt;
+use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 
@@ -7,6 +8,8 @@ use crate::{
     error::{self, Error},
     Config,
 };
+
+use griphook_binance::{ClickhouseDB, Consumer, PostgresDB};
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum OffsetReset {
@@ -19,6 +22,21 @@ impl AsRef<str> for OffsetReset {
         match self {
             Self::Earliest => "earliest",
             Self::Latest => "latest",
+        }
+    }
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum Storage {
+    Clickhouse,
+    Postgres,
+}
+
+impl AsRef<str> for Storage {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Clickhouse => "clickhouse",
+            Self::Postgres => "postgres",
         }
     }
 }
@@ -41,6 +59,31 @@ pub enum Commands {
             value_enum
         )]
         offset_reset: OffsetReset,
+    },
+
+    #[command(about = "Push messages from a specific Kafka topic to storage")]
+    Sink {
+        #[arg(help = "The Kafka topic to sink")]
+        topic: String,
+
+        #[clap(
+            long = "offset",
+            short = 'o',
+            help = "Specify the offset reset value",
+            default_value = "latest",
+            value_enum
+        )]
+        offset_reset: OffsetReset,
+
+        // #[arg(help = "The storage to sink to")]
+        #[clap(
+            long = "storage",
+            short = 's',
+            help = "The storage to sink to",
+            default_value = "clickhouse",
+            value_enum
+        )]
+        storage: Storage,
     },
 }
 
@@ -180,6 +223,40 @@ impl Commands {
                 .await
                 .context(error::ShutdownTokioRuntimeSnafu)
             }
+            Self::Sink { topic, offset_reset, storage } => {
+                let consumer = config.kafka.create_consumer(offset_reset.as_ref())?;
+                let stream_type = StreamType::try_from(&topic)?;
+                let table_name = topic.replace('.', "_");
+                let clickhouse_client = config.clickhouse.create_client();
+                let clickhouse_db = Arc::new(ClickhouseDB::new(clickhouse_client));
+                let postgres_client = config.postgres.create_pool().await?;
+                let postgres_db = Arc::new(PostgresDB::new(postgres_client));
+
+                Toplevel::new(|s| async move {
+                    let _unused =
+                        match (storage, stream_type) {
+                            (Storage::Clickhouse, StreamType::Trade) => s.start(
+                                SubsystemBuilder::new("binance-clickhouse-trade-sink", move |h| {
+                                    let consumer =
+                                        Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                    consumer.run(topic, h)
+                                }),
+                            ),
+                            (Storage::Postgres, StreamType::Trade) => s.start(
+                                SubsystemBuilder::new("binance-postgres-trade-sink", move |h| {
+                                    let consumer =
+                                        Consumer::new(postgres_db.clone(), consumer, table_name);
+                                    consumer.run(topic, h)
+                                }),
+                            ),
+                            _ => unimplemented!(),
+                        };
+                })
+                .catch_signals()
+                .handle_shutdown_requests(Duration::from_secs(5))
+                .await
+                .context(error::ShutdownTokioRuntimeSnafu)
+            }
         }
     }
 }
@@ -187,8 +264,8 @@ impl Commands {
 fn extract_stream_type(input: &str) -> Result<String, Error> {
     let parts: Vec<&str> = input.split('.').collect();
 
-    if parts.len() > 2 {
-        let stream_type = parts[2].to_lowercase();
+    if parts.len() > 3 {
+        let stream_type = parts[3].to_lowercase();
         if stream_type.contains("ticker_") {
             return Ok("windowticker".to_string());
         } else if stream_type.contains("depth") && stream_type.len() > 5 {
@@ -219,6 +296,26 @@ enum StreamType {
     Ticker,
     Trade,
     WindowTicker,
+}
+
+impl std::fmt::Display for StreamType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AggTrade => write!(f, "aggtrade"),
+            Self::AvgPrice => write!(f, "avgprice"),
+            Self::BookDepth => write!(f, "depth"),
+            Self::BookTicker => write!(f, "bookticker"),
+            Self::ContinuousKline => write!(f, "continuouskline"),
+            Self::Kline => write!(f, "kline"),
+            Self::ForceOrder => write!(f, "forceorder"),
+            Self::MarkPrice => write!(f, "markprice"),
+            Self::MiniTicker => write!(f, "miniticker"),
+            Self::PartialBookDepth => write!(f, "partialbookdepth"),
+            Self::Ticker => write!(f, "ticker"),
+            Self::Trade => write!(f, "trade"),
+            Self::WindowTicker => write!(f, "windowticker"),
+        }
+    }
 }
 
 impl TryFrom<&String> for StreamType {

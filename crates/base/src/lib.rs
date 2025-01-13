@@ -15,7 +15,7 @@ pub static PROJECT_SEMVER: Lazy<semver::Version> = Lazy::new(|| {
     })
 });
 
-pub const PROJECT_NAME: &str = "Griphook";
+pub const PROJECT_NAME: &str = "griphook";
 pub const CEX_CONFIG_FILE_NAME: &str = "cexflow.yaml";
 
 pub static PROJECT_CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| {
