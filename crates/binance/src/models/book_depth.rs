@@ -75,7 +75,7 @@ impl Avro for BookDepth {
     }
 }
 
-#[derive(Row, Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow)]
 pub struct BookDepthRow {
     pub event_time: i64,
     pub first_update_id: i64,
@@ -111,7 +111,54 @@ impl TryFrom<BookDepth> for BookDepthRow {
     }
 }
 
-impl Database<BookDepth, BookDepthRow> for ClickhouseDB {
+#[derive(Row, Serialize, Debug)]
+pub struct BookDepthNestedRow {
+    pub event_time: i64,
+    pub first_update_id: i64,
+    pub final_update_id: i64,
+    #[serde(rename = "bids.price")]
+    pub bids_price: Vec<f64>,
+    #[serde(rename = "bids.quantity")]
+    pub bids_quantity: Vec<f64>,
+    #[serde(rename = "asks.price")]
+    pub asks_price: Vec<f64>,
+    #[serde(rename = "asks.quantity")]
+    pub asks_quantity: Vec<f64>,
+}
+
+impl TryFrom<BookDepth> for BookDepthNestedRow {
+    type Error = error::Error;
+
+    fn try_from(data: BookDepth) -> Result<Self> {
+        let mut bid_prices = Vec::with_capacity(data.bids.len());
+        let mut bid_quantities = Vec::with_capacity(data.bids.len());
+
+        for bid in data.bids {
+            bid_prices.push(bid.price.parse().context(error::ParseF64Snafu)?);
+            bid_quantities.push(bid.quantity.parse().context(error::ParseF64Snafu)?);
+        }
+
+        let mut ask_prices = Vec::with_capacity(data.asks.len());
+        let mut ask_quantities = Vec::with_capacity(data.asks.len());
+
+        for ask in data.asks {
+            ask_prices.push(ask.price.parse().context(error::ParseF64Snafu)?);
+            ask_quantities.push(ask.quantity.parse().context(error::ParseF64Snafu)?);
+        }
+
+        Ok(Self {
+            event_time: data.event_time,
+            first_update_id: data.first_update_id,
+            final_update_id: data.final_update_id,
+            bids_price: bid_prices,
+            bids_quantity: bid_quantities,
+            asks_price: ask_prices,
+            asks_quantity: ask_quantities,
+        })
+    }
+}
+
+impl Database<BookDepth, BookDepthNestedRow> for ClickhouseDB {
     async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
         let create_table = format!(
             r#"
@@ -136,13 +183,13 @@ impl Database<BookDepth, BookDepthRow> for ClickhouseDB {
         Ok(())
     }
 
-    async fn to_row(&self, data: BookDepth) -> Result<BookDepthRow> {
-        BookDepthRow::try_from(data)
+    async fn to_row(&self, data: BookDepth) -> Result<BookDepthNestedRow> {
+        BookDepthNestedRow::try_from(data)
     }
 
-    async fn insert_row(&self, table_name: &str, data: BookDepthRow) -> Result<()> {
+    async fn insert_row(&self, table_name: &str, data: BookDepthNestedRow) -> Result<()> {
         let mut insert =
-            self.client.insert::<BookDepthRow>(table_name).context(error::ClickhouseSnafu)?;
+            self.client.insert::<BookDepthNestedRow>(table_name).context(error::ClickhouseSnafu)?;
         insert.write(&data).await.context(error::ClickhouseSnafu)?;
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())

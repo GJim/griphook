@@ -11,10 +11,11 @@ pub use consumer::{inspector, sink::Consumer};
 pub use error::Error;
 use error::{AvroSerializationSnafu, Result};
 pub use models::{
-    AggTrade, AggTradeRow, AvgPrice, AvgPriceRow, Avro, BookDepth, BookDepthRow, BookTicker,
-    BookTickerRow, ContinuousKline, ContinuousKlineRow, ForceOrder, ForceOrderRow, Kline, KlineRow,
-    MarkPrice, MarkPriceRow, MiniTicker, MiniTickerRow, PartialBookDepth, PartialBookDepthRow,
-    Ticker, TickerRow, Trade, TradeRow, WindowTicker, WindowTickerRow,
+    AggTrade, AggTradeRow, AvgPrice, AvgPriceRow, Avro, BookDepth, BookDepthNestedRow,
+    BookDepthRow, BookTicker, BookTickerRow, ContinuousKline, ContinuousKlineRow, ForceOrder,
+    ForceOrderRow, Kline, KlineRow, MarkPrice, MarkPriceRow, MiniTicker, MiniTickerRow,
+    PartialBookDepth, PartialBookDepthNestedRow, PartialBookDepthRow, Ticker, TickerRow, Trade,
+    TradeRow, WindowTicker, WindowTickerRow,
 };
 pub use producer::run;
 

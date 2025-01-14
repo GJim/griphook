@@ -364,7 +364,7 @@ impl Commands {
                                 let consumer: Consumer<
                                     ClickhouseDB,
                                     griphook_binance::BookDepth,
-                                    griphook_binance::BookDepthRow,
+                                    griphook_binance::BookDepthNestedRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
                                 consumer.run(topic, h)
                             }),
@@ -386,7 +386,7 @@ impl Commands {
                                     let consumer: Consumer<
                                         ClickhouseDB,
                                         griphook_binance::PartialBookDepth,
-                                        griphook_binance::PartialBookDepthRow,
+                                        griphook_binance::PartialBookDepthNestedRow,
                                     > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
                                     consumer.run(topic, h)
                                 },
