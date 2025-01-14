@@ -10,6 +10,13 @@ pub enum Error {
         location: Location,
     },
 
+    #[snafu(display("Failed to parse json: {source}, location: {location}"))]
+    ParseJson {
+        source: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("ClickHouse error: {source}, location: {location}"))]
     Clickhouse {
         source: clickhouse::error::Error,

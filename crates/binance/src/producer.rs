@@ -71,11 +71,13 @@ pub async fn run(
                     }
                 } else {
                     tracing::info!("WebSocket stream ended");
+                    let _unused = write.send(Message::Close(None)).await;
                     break;
                 }
             }
             () = subsys.on_shutdown_requested() => {
                 tracing::info!("Shutdown requested");
+                let _unused = write.send(Message::Close(None)).await;
                 break;
             }
         }

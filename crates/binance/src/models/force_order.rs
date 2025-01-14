@@ -1,6 +1,13 @@
+use crate::{
+    models::{
+        error::{self, Result},
+        Avro,
+    },
+    ClickhouseDB, Database, PostgresDB,
+};
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
-
-use super::Avro;
+use snafu::ResultExt;
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -69,5 +76,143 @@ pub struct ForceOrderData {
 impl Avro for ForceOrder {
     fn raw_schema() -> &'static str {
         RAW_SCHEMA
+    }
+}
+
+#[derive(Row, Serialize, sqlx::FromRow)]
+pub struct ForceOrderRow {
+    pub event_time: i64,
+    pub side: String,
+    pub order_type: String,
+    pub time_in_force: String,
+    pub quantity: f64,
+    pub price: f64,
+    pub average_price: f64,
+    pub status: String,
+    pub last_filled_quantity: f64,
+    pub filled_quantity: f64,
+    pub trade_time: i64,
+}
+
+impl TryFrom<ForceOrder> for ForceOrderRow {
+    type Error = error::Error;
+
+    fn try_from(order: ForceOrder) -> Result<Self> {
+        Ok(Self {
+            event_time: order.event_time,
+            side: order.order.side,
+            order_type: order.order.order_type,
+            time_in_force: order.order.time_in_force,
+            quantity: order.order.original_quantity.parse().context(error::ParseF64Snafu)?,
+            price: order.order.price.parse().context(error::ParseF64Snafu)?,
+            average_price: order.order.average_price.parse().context(error::ParseF64Snafu)?,
+            status: order.order.order_status,
+            last_filled_quantity: order
+                .order
+                .last_filled_quantity
+                .parse()
+                .context(error::ParseF64Snafu)?,
+            filled_quantity: order
+                .order
+                .accumulated_filled_quantity
+                .parse()
+                .context(error::ParseF64Snafu)?,
+            trade_time: order.order.trade_time,
+        })
+    }
+}
+
+impl Database<ForceOrder, ForceOrderRow> for ClickhouseDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time Int64,
+                side String,
+                order_type String,
+                time_in_force String,
+                quantity Float64,
+                price Float64,
+                average_price Float64,
+                status String,
+                last_filled_quantity Float64,
+                filled_quantity Float64,
+                trade_time Int64
+            ) ENGINE = MergeTree()
+            ORDER BY (event_time)
+            "#,
+        );
+        self.client.query(&query).execute().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: ForceOrder) -> Result<ForceOrderRow> {
+        ForceOrderRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: ForceOrderRow) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+}
+
+impl Database<ForceOrder, ForceOrderRow> for PostgresDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time BIGINT NOT NULL,
+                side VARCHAR(10) NOT NULL,
+                order_type VARCHAR(20) NOT NULL,
+                time_in_force VARCHAR(10) NOT NULL,
+                quantity DOUBLE PRECISION NOT NULL,
+                price DOUBLE PRECISION NOT NULL,
+                average_price DOUBLE PRECISION NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                last_filled_quantity DOUBLE PRECISION NOT NULL,
+                filled_quantity DOUBLE PRECISION NOT NULL,
+                trade_time BIGINT NOT NULL,
+                PRIMARY KEY (event_time)
+            )
+            "#,
+        );
+        let _unused =
+            sqlx::query(&query).execute(&self.client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: ForceOrder) -> Result<ForceOrderRow> {
+        ForceOrderRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: ForceOrderRow) -> Result<()> {
+        let query = format!(
+            r#"
+            INSERT INTO {table_name} (
+                event_time, side, order_type, time_in_force,
+                quantity, price, average_price, status,
+                last_filled_quantity, filled_quantity, trade_time
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (event_time) DO NOTHING
+            "#,
+        );
+        let _unused = sqlx::query(&query)
+            .bind(data.event_time)
+            .bind(data.side)
+            .bind(data.order_type)
+            .bind(data.time_in_force)
+            .bind(data.quantity)
+            .bind(data.price)
+            .bind(data.average_price)
+            .bind(data.status)
+            .bind(data.last_filled_quantity)
+            .bind(data.filled_quantity)
+            .bind(data.trade_time)
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+        Ok(())
     }
 }

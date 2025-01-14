@@ -8,23 +8,20 @@ pub struct BinanceConfig {
     #[serde(default = "BinanceConfig::default_trading_type")]
     pub trading_type: TradingType,
 
-    #[serde(default = "BinanceConfig::future_subscription")]
+    #[serde(default = "BinanceConfig::spot_subscription")]
     pub subscription: Vec<String>,
 }
 
 impl Default for BinanceConfig {
     fn default() -> Self {
-        Self {
-            trading_type: Self::default_trading_type(),
-            subscription: Self::future_subscription(),
-        }
+        Self { trading_type: Self::default_trading_type(), subscription: Self::spot_subscription() }
     }
 }
 
 #[allow(dead_code)]
 impl BinanceConfig {
     const fn default_trading_type() -> TradingType {
-        TradingType::USDFutures
+        TradingType::Spot
     }
 
     fn spot_subscription() -> Vec<String> {

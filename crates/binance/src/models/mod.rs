@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 
 pub mod agg_trade;
 pub mod avg_price;
@@ -25,17 +26,34 @@ pub struct Order {
     pub quantity: String,
 }
 
-pub use agg_trade::AggTrade;
-pub use avg_price::AvgPrice;
+#[derive(clickhouse::Row, Serialize, sqlx::FromRow)]
+pub struct OrderRow {
+    pub price: f64,
+    pub quantity: f64,
+}
+
+impl TryFrom<Order> for OrderRow {
+    type Error = error::Error;
+
+    fn try_from(data: Order) -> error::Result<Self> {
+        Ok(Self {
+            price: data.price.parse().context(error::ParseF64Snafu)?,
+            quantity: data.quantity.parse().context(error::ParseF64Snafu)?,
+        })
+    }
+}
+
+pub use agg_trade::{AggTrade, AggTradeRow};
+pub use avg_price::{AvgPrice, AvgPriceRow};
 pub use avro::Avro;
-pub use book_depth::BookDepth;
-pub use book_ticker::BookTicker;
-pub use continuous_kline::ContinuousKline;
-pub use force_order::ForceOrder;
-pub use kline::Kline;
-pub use mark_price::MarkPrice;
-pub use mini_ticker::MiniTicker;
-pub use partial_book_depth::PartialBookDepth;
-pub use ticker::Ticker;
+pub use book_depth::{BookDepth, BookDepthRow};
+pub use book_ticker::{BookTicker, BookTickerRow};
+pub use continuous_kline::{ContinuousKline, ContinuousKlineRow};
+pub use force_order::{ForceOrder, ForceOrderRow};
+pub use kline::{Kline, KlineRow};
+pub use mark_price::{MarkPrice, MarkPriceRow};
+pub use mini_ticker::{MiniTicker, MiniTickerRow};
+pub use partial_book_depth::{PartialBookDepth, PartialBookDepthRow};
+pub use ticker::{Ticker, TickerRow};
 pub use trade::{Trade, TradeRow};
-pub use window_ticker::WindowTicker;
+pub use window_ticker::{WindowTicker, WindowTickerRow};

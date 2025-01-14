@@ -8,12 +8,13 @@ mod models;
 mod producer;
 
 pub use consumer::{inspector, sink::Consumer};
-// pub use database::clickhouse::ClickHouseDatabase;
 pub use error::Error;
 use error::{AvroSerializationSnafu, Result};
 pub use models::{
-    AggTrade, AvgPrice, Avro, BookDepth, BookTicker, ContinuousKline, ForceOrder, Kline, MarkPrice,
-    MiniTicker, PartialBookDepth, Ticker, Trade, TradeRow, WindowTicker,
+    AggTrade, AggTradeRow, AvgPrice, AvgPriceRow, Avro, BookDepth, BookDepthRow, BookTicker,
+    BookTickerRow, ContinuousKline, ContinuousKlineRow, ForceOrder, ForceOrderRow, Kline, KlineRow,
+    MarkPrice, MarkPriceRow, MiniTicker, MiniTickerRow, PartialBookDepth, PartialBookDepthRow,
+    Ticker, TickerRow, Trade, TradeRow, WindowTicker, WindowTickerRow,
 };
 pub use producer::run;
 

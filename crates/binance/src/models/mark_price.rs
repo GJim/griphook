@@ -1,6 +1,13 @@
+use crate::{
+    models::{
+        error::{self, Result},
+        Avro,
+    },
+    ClickhouseDB, Database, PostgresDB,
+};
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
-
-use super::Avro;
+use snafu::ResultExt;
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -43,5 +50,111 @@ pub struct MarkPrice {
 impl Avro for MarkPrice {
     fn raw_schema() -> &'static str {
         RAW_SCHEMA
+    }
+}
+
+#[derive(Row, Serialize, sqlx::FromRow)]
+pub struct MarkPriceRow {
+    pub event_time: i64,
+    pub mark_price: f64,
+    pub index_price: f64,
+    pub estimated_settle_price: f64,
+    pub funding_rate: f64,
+    pub next_funding_time: i64,
+}
+
+impl TryFrom<MarkPrice> for MarkPriceRow {
+    type Error = error::Error;
+
+    fn try_from(price: MarkPrice) -> Result<Self> {
+        Ok(Self {
+            event_time: price.event_time,
+            mark_price: price.mark_price.parse().context(error::ParseF64Snafu)?,
+            index_price: price.index_price.parse().context(error::ParseF64Snafu)?,
+            estimated_settle_price: price
+                .estimated_settle_price
+                .parse()
+                .context(error::ParseF64Snafu)?,
+            funding_rate: price.funding_rate.parse().context(error::ParseF64Snafu)?,
+            next_funding_time: price.next_funding_time,
+        })
+    }
+}
+
+impl Database<MarkPrice, MarkPriceRow> for ClickhouseDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time Int64,
+                mark_price Float64,
+                index_price Float64,
+                estimated_settle_price Float64,
+                funding_rate Float64,
+                next_funding_time Int64
+            ) ENGINE = MergeTree()
+            ORDER BY (event_time)
+            "#,
+        );
+        self.client.query(&query).execute().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: MarkPrice) -> Result<MarkPriceRow> {
+        MarkPriceRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: MarkPriceRow) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+}
+
+impl Database<MarkPrice, MarkPriceRow> for PostgresDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time BIGINT NOT NULL,
+                mark_price DOUBLE PRECISION NOT NULL,
+                index_price DOUBLE PRECISION NOT NULL,
+                estimated_settle_price DOUBLE PRECISION NOT NULL,
+                funding_rate DOUBLE PRECISION NOT NULL,
+                next_funding_time BIGINT NOT NULL,
+                PRIMARY KEY (event_time)
+            )
+            "#,
+        );
+        let _unused =
+            sqlx::query(&query).execute(&self.client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: MarkPrice) -> Result<MarkPriceRow> {
+        MarkPriceRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: MarkPriceRow) -> Result<()> {
+        let query = format!(
+            r#"
+            INSERT INTO {table_name} (
+                event_time, mark_price, index_price, estimated_settle_price,
+                funding_rate, next_funding_time
+            ) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (event_time) DO NOTHING
+            "#,
+        );
+        let _unused = sqlx::query(&query)
+            .bind(data.event_time)
+            .bind(data.mark_price)
+            .bind(data.index_price)
+            .bind(data.estimated_settle_price)
+            .bind(data.funding_rate)
+            .bind(data.next_funding_time)
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+        Ok(())
     }
 }

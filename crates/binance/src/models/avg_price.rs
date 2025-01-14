@@ -1,6 +1,13 @@
+use crate::{
+    models::{
+        error::{self, Result},
+        Avro,
+    },
+    ClickhouseDB, Database, PostgresDB,
+};
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
-
-use super::Avro;
+use snafu::ResultExt;
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -36,5 +43,92 @@ pub struct AvgPrice {
 impl Avro for AvgPrice {
     fn raw_schema() -> &'static str {
         RAW_SCHEMA
+    }
+}
+
+#[derive(Row, Serialize, sqlx::FromRow)]
+pub struct AvgPriceRow {
+    pub interval: String,
+    pub average_price: f64,
+    pub last_trade_time: i64,
+}
+
+impl TryFrom<AvgPrice> for AvgPriceRow {
+    type Error = error::Error;
+
+    fn try_from(price: AvgPrice) -> Result<Self> {
+        Ok(Self {
+            interval: price.interval,
+            average_price: price.average_price.parse().context(error::ParseF64Snafu)?,
+            last_trade_time: price.last_trade_time,
+        })
+    }
+}
+
+impl Database<AvgPrice, AvgPriceRow> for ClickhouseDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                interval String,
+                average_price Float64,
+                last_trade_time Int64
+            ) ENGINE = MergeTree()
+            ORDER BY (interval, last_trade_time)
+            "#,
+        );
+        self.client.query(&query).execute().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: AvgPrice) -> Result<AvgPriceRow> {
+        AvgPriceRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: AvgPriceRow) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+}
+
+impl Database<AvgPrice, AvgPriceRow> for PostgresDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                interval VARCHAR(30) NOT NULL,
+                average_price DOUBLE PRECISION NOT NULL,
+                last_trade_time BIGINT NOT NULL,
+                PRIMARY KEY (interval, last_trade_time)
+            )
+            "#,
+        );
+        let _unused =
+            sqlx::query(&query).execute(&self.client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: AvgPrice) -> Result<AvgPriceRow> {
+        AvgPriceRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: AvgPriceRow) -> Result<()> {
+        let query = format!(
+            r#"
+            INSERT INTO {table_name} (
+                interval, average_price, last_trade_time
+            ) VALUES ($1, $2, $3)
+            "#,
+        );
+        let _unused = sqlx::query(&query)
+            .bind(data.interval)
+            .bind(data.average_price)
+            .bind(data.last_trade_time)
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+        Ok(())
     }
 }

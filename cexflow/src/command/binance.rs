@@ -233,24 +233,288 @@ impl Commands {
                 let postgres_db = Arc::new(PostgresDB::new(postgres_client));
 
                 Toplevel::new(|s| async move {
-                    let _unused =
-                        match (storage, stream_type) {
-                            (Storage::Clickhouse, StreamType::Trade) => s.start(
-                                SubsystemBuilder::new("binance-clickhouse-trade-sink", move |h| {
-                                    let consumer =
-                                        Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                    let _unused = match (storage, stream_type) {
+                        (Storage::Clickhouse, StreamType::Trade) => s.start(SubsystemBuilder::new(
+                            "binance-clickhouse-trade-sink",
+                            move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::Trade,
+                                    griphook_binance::TradeRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            },
+                        )),
+                        (Storage::Postgres, StreamType::Trade) => s.start(SubsystemBuilder::new(
+                            "binance-postgres-trade-sink",
+                            move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::Trade,
+                                    griphook_binance::TradeRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            },
+                        )),
+                        (Storage::Clickhouse, StreamType::AggTrade) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-aggtrade-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::AggTrade,
+                                    griphook_binance::AggTradeRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::AggTrade) => s.start(
+                            SubsystemBuilder::new("binance-postgres-aggtrade-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::AggTrade,
+                                    griphook_binance::AggTradeRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::BookTicker) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-bookticker-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::BookTicker,
+                                    griphook_binance::BookTickerRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::BookTicker) => s.start(
+                            SubsystemBuilder::new("binance-postgres-bookticker-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::BookTicker,
+                                    griphook_binance::BookTickerRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::Kline) => s.start(SubsystemBuilder::new(
+                            "binance-clickhouse-kline-sink",
+                            move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::Kline,
+                                    griphook_binance::KlineRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            },
+                        )),
+                        (Storage::Postgres, StreamType::Kline) => s.start(SubsystemBuilder::new(
+                            "binance-postgres-kline-sink",
+                            move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::Kline,
+                                    griphook_binance::KlineRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            },
+                        )),
+                        (Storage::Clickhouse, StreamType::MiniTicker) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-miniticker-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::MiniTicker,
+                                    griphook_binance::MiniTickerRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::MiniTicker) => s.start(
+                            SubsystemBuilder::new("binance-postgres-miniticker-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::MiniTicker,
+                                    griphook_binance::MiniTickerRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::Ticker) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-ticker-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::Ticker,
+                                    griphook_binance::TickerRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::Ticker) => s.start(SubsystemBuilder::new(
+                            "binance-postgres-ticker-sink",
+                            move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::Ticker,
+                                    griphook_binance::TickerRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            },
+                        )),
+                        (Storage::Clickhouse, StreamType::BookDepth) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-bookdepth-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::BookDepth,
+                                    griphook_binance::BookDepthRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::BookDepth) => s.start(
+                            SubsystemBuilder::new("binance-postgres-bookdepth-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::BookDepth,
+                                    griphook_binance::BookDepthRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::PartialBookDepth) => {
+                            s.start(SubsystemBuilder::new(
+                                "binance-clickhouse-partialbookdepth-sink",
+                                move |h| {
+                                    let consumer: Consumer<
+                                        ClickhouseDB,
+                                        griphook_binance::PartialBookDepth,
+                                        griphook_binance::PartialBookDepthRow,
+                                    > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
                                     consumer.run(topic, h)
-                                }),
-                            ),
-                            (Storage::Postgres, StreamType::Trade) => s.start(
-                                SubsystemBuilder::new("binance-postgres-trade-sink", move |h| {
-                                    let consumer =
-                                        Consumer::new(postgres_db.clone(), consumer, table_name);
+                                },
+                            ))
+                        }
+                        (Storage::Postgres, StreamType::PartialBookDepth) => {
+                            s.start(SubsystemBuilder::new(
+                                "binance-postgres-partialbookdepth-sink",
+                                move |h| {
+                                    let consumer: Consumer<
+                                        PostgresDB,
+                                        griphook_binance::PartialBookDepth,
+                                        griphook_binance::PartialBookDepthRow,
+                                    > = Consumer::new(postgres_db.clone(), consumer, table_name);
                                     consumer.run(topic, h)
-                                }),
-                            ),
-                            _ => unimplemented!(),
-                        };
+                                },
+                            ))
+                        }
+                        (Storage::Clickhouse, StreamType::WindowTicker) => {
+                            s.start(SubsystemBuilder::new(
+                                "binance-clickhouse-windowticker-sink",
+                                move |h| {
+                                    let consumer: Consumer<
+                                        ClickhouseDB,
+                                        griphook_binance::WindowTicker,
+                                        griphook_binance::WindowTickerRow,
+                                    > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                    consumer.run(topic, h)
+                                },
+                            ))
+                        }
+                        (Storage::Postgres, StreamType::WindowTicker) => s.start(
+                            SubsystemBuilder::new("binance-postgres-windowticker-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::WindowTicker,
+                                    griphook_binance::WindowTickerRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::ForceOrder) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-forceorder-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::ForceOrder,
+                                    griphook_binance::ForceOrderRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::ForceOrder) => s.start(
+                            SubsystemBuilder::new("binance-postgres-forceorder-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::ForceOrder,
+                                    griphook_binance::ForceOrderRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::MarkPrice) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-markprice-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::MarkPrice,
+                                    griphook_binance::MarkPriceRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::MarkPrice) => s.start(
+                            SubsystemBuilder::new("binance-postgres-markprice-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::MarkPrice,
+                                    griphook_binance::MarkPriceRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Clickhouse, StreamType::ContinuousKline) => {
+                            s.start(SubsystemBuilder::new(
+                                "binance-clickhouse-continuouskline-sink",
+                                move |h| {
+                                    let consumer: Consumer<
+                                        ClickhouseDB,
+                                        griphook_binance::ContinuousKline,
+                                        griphook_binance::ContinuousKlineRow,
+                                    > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                    consumer.run(topic, h)
+                                },
+                            ))
+                        }
+                        (Storage::Postgres, StreamType::ContinuousKline) => {
+                            s.start(SubsystemBuilder::new(
+                                "binance-postgres-continuouskline-sink",
+                                move |h| {
+                                    let consumer: Consumer<
+                                        PostgresDB,
+                                        griphook_binance::ContinuousKline,
+                                        griphook_binance::ContinuousKlineRow,
+                                    > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                    consumer.run(topic, h)
+                                },
+                            ))
+                        }
+                        (Storage::Clickhouse, StreamType::AvgPrice) => s.start(
+                            SubsystemBuilder::new("binance-clickhouse-avgprice-sink", move |h| {
+                                let consumer: Consumer<
+                                    ClickhouseDB,
+                                    griphook_binance::AvgPrice,
+                                    griphook_binance::AvgPriceRow,
+                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                        (Storage::Postgres, StreamType::AvgPrice) => s.start(
+                            SubsystemBuilder::new("binance-postgres-avgprice-sink", move |h| {
+                                let consumer: Consumer<
+                                    PostgresDB,
+                                    griphook_binance::AvgPrice,
+                                    griphook_binance::AvgPriceRow,
+                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
+                                consumer.run(topic, h)
+                            }),
+                        ),
+                    };
                 })
                 .catch_signals()
                 .handle_shutdown_requests(Duration::from_secs(5))

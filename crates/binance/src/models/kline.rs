@@ -1,6 +1,13 @@
+use crate::{
+    models::{
+        error::{self, Result},
+        Avro,
+    },
+    ClickhouseDB, Database, PostgresDB,
+};
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
-
-use super::Avro;
+use snafu::ResultExt;
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -90,5 +97,179 @@ pub struct KlineData {
 impl Avro for Kline {
     fn raw_schema() -> &'static str {
         RAW_SCHEMA
+    }
+}
+
+#[derive(Row, Serialize, sqlx::FromRow)]
+pub struct KlineRow {
+    pub event_time: i64,
+    pub start_time: i64,
+    pub close_time: i64,
+    pub interval: String,
+    pub first_trade_id: i64,
+    pub last_trade_id: i64,
+    pub open_price: f64,
+    pub close_price: f64,
+    pub high_price: f64,
+    pub low_price: f64,
+    pub base_asset_volume: f64,
+    pub number_of_trades: i64,
+    pub is_closed: bool,
+    pub quote_asset_volume: f64,
+    pub taker_buy_base_volume: f64,
+    pub taker_buy_quote_volume: f64,
+}
+
+impl TryFrom<Kline> for KlineRow {
+    type Error = error::Error;
+
+    fn try_from(data: Kline) -> Result<Self> {
+        Ok(Self {
+            event_time: data.event_time,
+            start_time: data.kline.start_time,
+            close_time: data.kline.close_time,
+            interval: data.kline.interval,
+            first_trade_id: data.kline.first_trade_id,
+            last_trade_id: data.kline.last_trade_id,
+            open_price: data.kline.open_price.parse().context(error::ParseF64Snafu)?,
+            close_price: data.kline.close_price.parse().context(error::ParseF64Snafu)?,
+            high_price: data.kline.high_price.parse().context(error::ParseF64Snafu)?,
+            low_price: data.kline.low_price.parse().context(error::ParseF64Snafu)?,
+            base_asset_volume: data
+                .kline
+                .base_asset_volume
+                .parse()
+                .context(error::ParseF64Snafu)?,
+            number_of_trades: data.kline.number_of_trades,
+            is_closed: data.kline.is_closed,
+            quote_asset_volume: data
+                .kline
+                .quote_asset_volume
+                .parse()
+                .context(error::ParseF64Snafu)?,
+            taker_buy_base_volume: data
+                .kline
+                .taker_buy_base_volume
+                .parse()
+                .context(error::ParseF64Snafu)?,
+            taker_buy_quote_volume: data
+                .kline
+                .taker_buy_quote_volume
+                .parse()
+                .context(error::ParseF64Snafu)?,
+        })
+    }
+}
+
+impl Database<Kline, KlineRow> for ClickhouseDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let create_table = format!(
+            r#"
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    event_time Int64,
+                    start_time Int64,
+                    close_time Int64,
+                    interval String,
+                    first_trade_id Int64,
+                    last_trade_id Int64,
+                    open_price Float64,
+                    close_price Float64,
+                    high_price Float64,
+                    low_price Float64,
+                    base_asset_volume Float64,
+                    number_of_trades Int64,
+                    is_closed Bool,
+                    quote_asset_volume Float64,
+                    taker_buy_base_volume Float64,
+                    taker_buy_quote_volume Float64
+                )
+                ENGINE = MergeTree()
+                ORDER BY (event_time)
+                "#
+        );
+        self.client.query(&create_table).execute().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: Kline) -> Result<KlineRow> {
+        KlineRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: KlineRow) -> Result<()> {
+        let mut insert =
+            self.client.insert::<KlineRow>(table_name).context(error::ClickhouseSnafu)?;
+        insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+}
+
+impl Database<Kline, KlineRow> for PostgresDB {
+    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
+        let create_table = format!(
+            r#"
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    event_time BIGINT,
+                    start_time BIGINT,
+                    close_time BIGINT,
+                    interval VARCHAR,
+                    first_trade_id BIGINT,
+                    last_trade_id BIGINT,
+                    open_price DOUBLE PRECISION,
+                    close_price DOUBLE PRECISION,
+                    high_price DOUBLE PRECISION,
+                    low_price DOUBLE PRECISION,
+                    base_asset_volume DOUBLE PRECISION,
+                    number_of_trades BIGINT,
+                    is_closed BOOLEAN,
+                    quote_asset_volume DOUBLE PRECISION,
+                    taker_buy_base_volume DOUBLE PRECISION,
+                    taker_buy_quote_volume DOUBLE PRECISION,
+                    PRIMARY KEY (event_time)
+                )
+                "#
+        );
+        let _unused =
+            sqlx::query(&create_table).execute(&self.client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn to_row(&self, data: Kline) -> Result<KlineRow> {
+        KlineRow::try_from(data)
+    }
+
+    async fn insert_row(&self, table_name: &str, data: KlineRow) -> Result<()> {
+        let _unused = sqlx::query(&format!(
+            r#"
+                INSERT INTO {table_name} (
+                    event_time, start_time, close_time, interval, first_trade_id,
+                    last_trade_id, open_price, close_price, high_price, low_price,
+                    base_asset_volume, number_of_trades, is_closed, quote_asset_volume,
+                    taker_buy_base_volume, taker_buy_quote_volume
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                ON CONFLICT (event_time) DO NOTHING
+            "#
+        ))
+        .bind(data.event_time)
+        .bind(data.start_time)
+        .bind(data.close_time)
+        .bind(data.interval)
+        .bind(data.first_trade_id)
+        .bind(data.last_trade_id)
+        .bind(data.open_price)
+        .bind(data.close_price)
+        .bind(data.high_price)
+        .bind(data.low_price)
+        .bind(data.base_asset_volume)
+        .bind(data.number_of_trades)
+        .bind(data.is_closed)
+        .bind(data.quote_asset_volume)
+        .bind(data.taker_buy_base_volume)
+        .bind(data.taker_buy_quote_volume)
+        .execute(&self.client)
+        .await
+        .context(error::PostgresSnafu)?;
+        Ok(())
     }
 }

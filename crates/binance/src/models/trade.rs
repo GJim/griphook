@@ -1,12 +1,13 @@
+use crate::{
+    models::{
+        error::{self, Result},
+        Avro,
+    },
+    ClickhouseDB, Database, PostgresDB,
+};
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
-
-use super::{
-    error::{self, Result},
-    Avro,
-};
-use crate::{ClickhouseDB, Database, PostgresDB};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -63,6 +64,19 @@ pub struct TradeRow {
     pub is_buyer_market_maker: bool,
 }
 
+impl TryFrom<Trade> for TradeRow {
+    type Error = error::Error;
+    fn try_from(value: Trade) -> Result<Self> {
+        Ok(Self {
+            trade_id: value.trade_id,
+            price: value.price.parse().context(error::ParseF64Snafu)?,
+            quantity: value.quantity.parse().context(error::ParseF64Snafu)?,
+            trade_time: value.trade_time,
+            is_buyer_market_maker: value.is_buyer_market_maker,
+        })
+    }
+}
+
 impl Database<Trade, TradeRow> for ClickhouseDB {
     async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
         let create_table = format!(
@@ -83,13 +97,7 @@ impl Database<Trade, TradeRow> for ClickhouseDB {
     }
 
     async fn to_row(&self, data: Trade) -> Result<TradeRow> {
-        Ok(TradeRow {
-            trade_id: data.trade_id,
-            price: data.price.parse().context(error::ParseF64Snafu)?,
-            quantity: data.quantity.parse().context(error::ParseF64Snafu)?,
-            trade_time: data.trade_time,
-            is_buyer_market_maker: data.is_buyer_market_maker,
-        })
+        TradeRow::try_from(data)
     }
 
     /// Inserts a row into the database.
@@ -122,13 +130,7 @@ impl Database<Trade, TradeRow> for PostgresDB {
     }
 
     async fn to_row(&self, data: Trade) -> Result<TradeRow> {
-        Ok(TradeRow {
-            trade_id: data.trade_id,
-            price: data.price.parse().context(error::ParseF64Snafu)?,
-            quantity: data.quantity.parse().context(error::ParseF64Snafu)?,
-            trade_time: data.trade_time,
-            is_buyer_market_maker: data.is_buyer_market_maker,
-        })
+        TradeRow::try_from(data)
     }
 
     /// Inserts a row into the database.
@@ -154,67 +156,3 @@ impl Database<Trade, TradeRow> for PostgresDB {
         Ok(())
     }
 }
-
-// impl ToDatabase<ClickHouse> for Trade {
-//     type Row = TradeRow;
-
-//     fn create_table_sql(table_name: &str) -> String {
-//         return format!(
-//             r#"
-//             CREATE TABLE IF NOT EXISTS {table_name} (
-//                 trade_id Int64,
-//                 price Float64,
-//                 quantity Float64,
-//                 trade_time Int64,
-//                 is_buyer_market_maker Bool
-//             )
-//             ENGINE = MergeTree()
-//             ORDER BY (trade_id)
-//             "#
-//         );
-//     }
-
-//     fn to_row(self) -> Result<Self::Row> {
-//         Ok(TradeRow {
-//             trade_id: self.trade_id,
-//             price: self.price.parse().context(error::ParseF64Snafu)?,
-//             quantity: self.quantity.parse().context(error::ParseF64Snafu)?,
-//             trade_time: self.trade_time,
-//             is_buyer_market_maker: self.is_buyer_market_maker,
-//         })
-//     }
-// }
-
-// impl ToDatabase<Postgres> for Trade {
-//     type Row = String;
-
-//     fn create_table_sql(table_name: &str) -> String {
-//         return format!(
-//             r#"
-//             CREATE TABLE IF NOT EXISTS {table_name} (
-//                 trade_id BIGINT,
-//                 price DOUBLE PRECISION,
-//                 quantity DOUBLE PRECISION,
-//                 trade_time BIGINT,
-//                 is_buyer_market_maker BOOLEAN,
-//                 PRIMARY KEY (trade_id)
-//             )
-//             "#
-//         );
-//     }
-
-//     fn to_row(self) -> Result<Self::Row> {
-//         let query = format!(
-//             "INSERT INTO {} (trade_id, price, quantity, trade_time, is_buyer_market_maker) \
-//              VALUES ($1, $2, $3, $4, $5) ON CONFLICT (trade_id) DO UPDATE SET price = $2, quantity = $3, trade_time = $4, is_buyer_market_maker = $5",
-//             table_name
-//         );
-//         Ok(TradeRow {
-//             trade_id: self.trade_id,
-//             price: self.price.parse().context(error::ParseF64Snafu)?,
-//             quantity: self.quantity.parse().context(error::ParseF64Snafu)?,
-//             trade_time: self.trade_time,
-//             is_buyer_market_maker: self.is_buyer_market_maker,
-//         })
-//     }
-// }
