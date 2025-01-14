@@ -165,9 +165,17 @@ impl Database<WindowTicker, WindowTickerRow> for ClickhouseDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: WindowTickerRow) -> Result<()> {
-        let mut insert =
-            self.client.insert::<WindowTickerRow>(table_name).context(error::ClickhouseSnafu)?;
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
         insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<WindowTickerRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
@@ -207,36 +215,78 @@ impl Database<WindowTicker, WindowTickerRow> for PostgresDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: WindowTickerRow) -> Result<()> {
-        let _unused = sqlx::query(&format!(
+        let query = format!(
             r#"
                 INSERT INTO {table_name} (
-                    event_time, price_change, price_change_percent, open_price, high_price,
-                    low_price, last_price, weighted_avg_price, total_traded_base_asset_volume,
-                    total_traded_quote_asset_volume, statistics_open_time, statistics_close_time,
-                    first_trade_id, last_trade_id, total_trades
+                    event_time, price_change, price_change_percent, open_price,
+                    high_price, low_price, last_price, weighted_avg_price,
+                    total_traded_base_asset_volume, total_traded_quote_asset_volume,
+                    statistics_open_time, statistics_close_time, first_trade_id,
+                    last_trade_id, total_trades
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                )
                 ON CONFLICT (event_time) DO NOTHING
-            "#
-        ))
-        .bind(data.event_time)
-        .bind(data.price_change)
-        .bind(data.price_change_percent)
-        .bind(data.open_price)
-        .bind(data.high_price)
-        .bind(data.low_price)
-        .bind(data.last_price)
-        .bind(data.weighted_avg_price)
-        .bind(data.total_traded_base_asset_volume)
-        .bind(data.total_traded_quote_asset_volume)
-        .bind(data.statistics_open_time)
-        .bind(data.statistics_close_time)
-        .bind(data.first_trade_id)
-        .bind(data.last_trade_id)
-        .bind(data.total_trades)
-        .execute(&self.client)
-        .await
-        .context(error::PostgresSnafu)?;
+            "#,
+        );
+        let _unused = sqlx::query(&query)
+            .bind(data.event_time)
+            .bind(data.price_change)
+            .bind(data.price_change_percent)
+            .bind(data.open_price)
+            .bind(data.high_price)
+            .bind(data.low_price)
+            .bind(data.last_price)
+            .bind(data.weighted_avg_price)
+            .bind(data.total_traded_base_asset_volume)
+            .bind(data.total_traded_quote_asset_volume)
+            .bind(data.statistics_open_time)
+            .bind(data.statistics_close_time)
+            .bind(data.first_trade_id)
+            .bind(data.last_trade_id)
+            .bind(data.total_trades)
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<WindowTickerRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (event_time, price_change, price_change_percent, open_price, \
+                high_price, low_price, last_price, weighted_avg_price, total_traded_base_asset_volume, \
+                total_traded_quote_asset_volume, statistics_open_time, statistics_close_time, first_trade_id, \
+                last_trade_id, total_trades) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.price_change)
+                    .push_bind(row.price_change_percent)
+                    .push_bind(row.open_price)
+                    .push_bind(row.high_price)
+                    .push_bind(row.low_price)
+                    .push_bind(row.last_price)
+                    .push_bind(row.weighted_avg_price)
+                    .push_bind(row.total_traded_base_asset_volume)
+                    .push_bind(row.total_traded_quote_asset_volume)
+                    .push_bind(row.statistics_open_time)
+                    .push_bind(row.statistics_close_time)
+                    .push_bind(row.first_trade_id)
+                    .push_bind(row.last_trade_id)
+                    .push_bind(row.total_trades);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

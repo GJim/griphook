@@ -32,6 +32,8 @@ cargo run --bin cexflow -- binance sink binance.btcusdt.ticker -o earliest -s po
   > remove `connect` `ksql-datagen`
 - cmake on windows
   > Microsoft Build Tools: Desktop development with C++
+- cmake on linux
+  > sudo apt-get install cmake
 
 ## Clickhouse
 

@@ -17,6 +17,21 @@ pub mod ticker;
 pub mod trade;
 pub mod window_ticker;
 
+pub use agg_trade::{AggTrade, AggTradeRow};
+pub use avg_price::{AvgPrice, AvgPriceRow};
+pub use avro::Avro;
+pub use book_depth::{BookDepth, BookDepthNestedRow, BookDepthRow};
+pub use book_ticker::{BookTicker, BookTickerRow};
+pub use continuous_kline::{ContinuousKline, ContinuousKlineRow};
+pub use force_order::{ForceOrder, ForceOrderRow};
+pub use kline::{Kline, KlineRow};
+pub use mark_price::{MarkPrice, MarkPriceRow};
+pub use mini_ticker::{MiniTicker, MiniTickerRow};
+pub use partial_book_depth::{PartialBookDepth, PartialBookDepthNestedRow, PartialBookDepthRow};
+pub use ticker::{Ticker, TickerRow};
+pub use trade::{Trade, TradeRow};
+pub use window_ticker::{WindowTicker, WindowTickerRow};
+
 /// Represents a price and quantity pair in the order book
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Order {
@@ -42,18 +57,3 @@ impl TryFrom<Order> for OrderRow {
         })
     }
 }
-
-pub use agg_trade::{AggTrade, AggTradeRow};
-pub use avg_price::{AvgPrice, AvgPriceRow};
-pub use avro::Avro;
-pub use book_depth::{BookDepth, BookDepthNestedRow, BookDepthRow};
-pub use book_ticker::{BookTicker, BookTickerRow};
-pub use continuous_kline::{ContinuousKline, ContinuousKlineRow};
-pub use force_order::{ForceOrder, ForceOrderRow};
-pub use kline::{Kline, KlineRow};
-pub use mark_price::{MarkPrice, MarkPriceRow};
-pub use mini_ticker::{MiniTicker, MiniTickerRow};
-pub use partial_book_depth::{PartialBookDepth, PartialBookDepthNestedRow, PartialBookDepthRow};
-pub use ticker::{Ticker, TickerRow};
-pub use trade::{Trade, TradeRow};
-pub use window_ticker::{WindowTicker, WindowTickerRow};

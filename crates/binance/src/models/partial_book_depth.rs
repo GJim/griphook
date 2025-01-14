@@ -165,6 +165,19 @@ impl Database<PartialBookDepth, PartialBookDepthNestedRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(
+        &self,
+        table_name: &str,
+        data: Vec<PartialBookDepthNestedRow>,
+    ) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<PartialBookDepth, PartialBookDepthRow> for PostgresDB {
@@ -203,6 +216,31 @@ impl Database<PartialBookDepth, PartialBookDepthRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(
+        &self,
+        table_name: &str,
+        data: Vec<PartialBookDepthRow>,
+    ) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!("INSERT INTO {table_name} (last_update_id, bids, asks) "),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.last_update_id)
+                    .push_bind(serde_json::to_value(&row.bids).unwrap())
+                    .push_bind(serde_json::to_value(&row.asks).unwrap());
+            })
+            .push(" ON CONFLICT (last_update_id) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

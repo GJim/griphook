@@ -202,6 +202,16 @@ impl Database<Kline, KlineRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<KlineRow>) -> Result<()> {
+        let mut insert =
+            self.client.insert::<KlineRow>(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<Kline, KlineRow> for PostgresDB {
@@ -239,37 +249,78 @@ impl Database<Kline, KlineRow> for PostgresDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: KlineRow) -> Result<()> {
-        let _unused = sqlx::query(&format!(
+        let query = format!(
             r#"
-                INSERT INTO {table_name} (
-                    event_time, start_time, close_time, interval, first_trade_id,
-                    last_trade_id, open_price, close_price, high_price, low_price,
-                    base_asset_volume, number_of_trades, is_closed, quote_asset_volume,
-                    taker_buy_base_volume, taker_buy_quote_volume
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                ON CONFLICT (event_time) DO NOTHING
-            "#
-        ))
-        .bind(data.event_time)
-        .bind(data.start_time)
-        .bind(data.close_time)
-        .bind(data.interval)
-        .bind(data.first_trade_id)
-        .bind(data.last_trade_id)
-        .bind(data.open_price)
-        .bind(data.close_price)
-        .bind(data.high_price)
-        .bind(data.low_price)
-        .bind(data.base_asset_volume)
-        .bind(data.number_of_trades)
-        .bind(data.is_closed)
-        .bind(data.quote_asset_volume)
-        .bind(data.taker_buy_base_volume)
-        .bind(data.taker_buy_quote_volume)
-        .execute(&self.client)
-        .await
-        .context(error::PostgresSnafu)?;
+            INSERT INTO {table_name} (
+                event_time, start_time, close_time, interval,
+                first_trade_id, last_trade_id, open_price, close_price,
+                high_price, low_price, base_asset_volume, number_of_trades,
+                is_closed, quote_asset_volume, taker_buy_base_volume,
+                taker_buy_quote_volume
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16
+            ) ON CONFLICT (event_time) DO NOTHING
+            "#,
+        );
+        let _unused = sqlx::query(&query)
+            .bind(data.event_time)
+            .bind(data.start_time)
+            .bind(data.close_time)
+            .bind(data.interval)
+            .bind(data.first_trade_id)
+            .bind(data.last_trade_id)
+            .bind(data.open_price)
+            .bind(data.close_price)
+            .bind(data.high_price)
+            .bind(data.low_price)
+            .bind(data.base_asset_volume)
+            .bind(data.number_of_trades)
+            .bind(data.is_closed)
+            .bind(data.quote_asset_volume)
+            .bind(data.taker_buy_base_volume)
+            .bind(data.taker_buy_quote_volume)
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<KlineRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> =
+            sqlx::QueryBuilder::new(format!(
+                "INSERT INTO {table_name} (event_time, start_time, close_time, interval, 
+                first_trade_id, last_trade_id, open_price, close_price, high_price, low_price, 
+                base_asset_volume, number_of_trades, is_closed, quote_asset_volume, 
+                taker_buy_base_volume, taker_buy_quote_volume) "
+            ));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.start_time)
+                    .push_bind(row.close_time)
+                    .push_bind(row.interval)
+                    .push_bind(row.first_trade_id)
+                    .push_bind(row.last_trade_id)
+                    .push_bind(row.open_price)
+                    .push_bind(row.close_price)
+                    .push_bind(row.high_price)
+                    .push_bind(row.low_price)
+                    .push_bind(row.base_asset_volume)
+                    .push_bind(row.number_of_trades)
+                    .push_bind(row.is_closed)
+                    .push_bind(row.quote_asset_volume)
+                    .push_bind(row.taker_buy_base_volume)
+                    .push_bind(row.taker_buy_quote_volume);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

@@ -188,6 +188,19 @@ impl Database<ContinuousKline, ContinuousKlineRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(
+        &self,
+        table_name: &str,
+        data: Vec<ContinuousKlineRow>,
+    ) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<ContinuousKline, ContinuousKlineRow> for PostgresDB {
@@ -228,16 +241,15 @@ impl Database<ContinuousKline, ContinuousKlineRow> for PostgresDB {
         let query = format!(
             r#"
             INSERT INTO {table_name} (
-                event_time, start_time, close_time,
-                interval, first_update_id, last_update_id, open_price,
+                event_time, start_time, close_time, interval,
+                first_update_id, last_update_id, open_price,
                 close_price, high_price, low_price, volume,
                 number_of_trades, is_closed, quote_volume,
                 taker_buy_volume, taker_buy_quote_volume
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                $10, $11, $12, $13, $14, $15, $16
-            )
-            ON CONFLICT (event_time) DO NOTHING
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16
+            ) ON CONFLICT (event_time) DO NOTHING
             "#,
         );
         let _unused = sqlx::query(&query)
@@ -260,6 +272,48 @@ impl Database<ContinuousKline, ContinuousKlineRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(
+        &self,
+        table_name: &str,
+        data: Vec<ContinuousKlineRow>,
+    ) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (event_time, start_time, close_time, interval, 
+                first_update_id, last_update_id, open_price, close_price, high_price, low_price, 
+                volume, number_of_trades, is_closed, quote_volume, taker_buy_volume, taker_buy_quote_volume) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.start_time)
+                    .push_bind(row.close_time)
+                    .push_bind(row.interval)
+                    .push_bind(row.first_update_id)
+                    .push_bind(row.last_update_id)
+                    .push_bind(row.open_price)
+                    .push_bind(row.close_price)
+                    .push_bind(row.high_price)
+                    .push_bind(row.low_price)
+                    .push_bind(row.volume)
+                    .push_bind(row.number_of_trades)
+                    .push_bind(row.is_closed)
+                    .push_bind(row.quote_volume)
+                    .push_bind(row.taker_buy_volume)
+                    .push_bind(row.taker_buy_quote_volume);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

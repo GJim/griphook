@@ -110,6 +110,15 @@ impl Database<MarkPrice, MarkPriceRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<MarkPriceRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<MarkPrice, MarkPriceRow> for PostgresDB {
@@ -155,6 +164,32 @@ impl Database<MarkPrice, MarkPriceRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<MarkPriceRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> =
+            sqlx::QueryBuilder::new(format!(
+                "INSERT INTO {table_name} (event_time, mark_price, index_price, estimated_settle_price, 
+                funding_rate, next_funding_time) "
+            ));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.mark_price)
+                    .push_bind(row.index_price)
+                    .push_bind(row.estimated_settle_price)
+                    .push_bind(row.funding_rate)
+                    .push_bind(row.next_funding_time);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

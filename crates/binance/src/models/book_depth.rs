@@ -194,6 +194,20 @@ impl Database<BookDepth, BookDepthNestedRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(
+        &self,
+        table_name: &str,
+        data: Vec<BookDepthNestedRow>,
+    ) -> Result<()> {
+        let mut insert =
+            self.client.insert::<BookDepthNestedRow>(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<BookDepth, BookDepthRow> for PostgresDB {
@@ -238,6 +252,43 @@ impl Database<BookDepth, BookDepthRow> for PostgresDB {
         .execute(&self.client)
         .await
         .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<BookDepthRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!("INSERT INTO {table_name} (event_time, first_update_id, final_update_id, bids, asks) "),
+        );
+
+        // Pre-serialize the JSON values to handle potential errors
+        let processed_data: Result<Vec<_>> = data
+            .into_iter()
+            .map(|row| {
+                let bids_json = serde_json::to_value(&row.bids).context(error::ParseJsonSnafu)?;
+                let asks_json = serde_json::to_value(&row.asks).context(error::ParseJsonSnafu)?;
+                Ok((row.event_time, row.first_update_id, row.final_update_id, bids_json, asks_json))
+            })
+            .collect();
+        let processed_data = processed_data?;
+
+        let _unused = query_builder
+            .push_values(
+                processed_data,
+                |mut b, (event_time, first_update_id, final_update_id, bids, asks)| {
+                    let _unused = b
+                        .push_bind(event_time)
+                        .push_bind(first_update_id)
+                        .push_bind(final_update_id)
+                        .push_bind(bids)
+                        .push_bind(asks);
+                },
+            )
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

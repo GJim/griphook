@@ -102,9 +102,17 @@ impl Database<Trade, TradeRow> for ClickhouseDB {
 
     /// Inserts a row into the database.
     async fn insert_row(&self, table_name: &str, data: TradeRow) -> Result<()> {
-        let mut insert =
-            self.client.insert::<TradeRow>(table_name).context(error::ClickhouseSnafu)?;
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
         insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<TradeRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
@@ -135,24 +143,49 @@ impl Database<Trade, TradeRow> for PostgresDB {
 
     /// Inserts a row into the database.
     async fn insert_row(&self, table_name: &str, data: TradeRow) -> Result<()> {
-        let _unused = sqlx::query(&format!(
-            "
+        let query = format!(
+            r#"
                 INSERT INTO {table_name} 
                     (trade_id, price, quantity, trade_time, is_buyer_market_maker) 
                 VALUES ($1, $2, $3, $4, $5) 
                 ON CONFLICT (trade_id) 
                 DO NOTHING
-            "
-        ))
-        .bind(data.trade_id)
-        .bind(data.price)
-        .bind(data.quantity)
-        .bind(data.trade_time)
-        .bind(data.is_buyer_market_maker)
-        .bind(table_name)
-        .execute(&self.client)
-        .await
-        .context(error::PostgresSnafu)?;
+            "#
+        );
+        let _unused = sqlx::query(&query)
+            .bind(data.trade_id)
+            .bind(data.price)
+            .bind(data.quantity)
+            .bind(data.trade_time)
+            .bind(data.is_buyer_market_maker)
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<TradeRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (trade_id, price, quantity, trade_time, is_buyer_market_maker) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.trade_id)
+                    .push_bind(row.price)
+                    .push_bind(row.quantity)
+                    .push_bind(row.trade_time)
+                    .push_bind(row.is_buyer_market_maker);
+            })
+            .push(" ON CONFLICT (trade_id) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

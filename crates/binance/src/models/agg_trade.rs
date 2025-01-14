@@ -122,6 +122,15 @@ impl Database<AggTrade, AggTradeRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<AggTradeRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<AggTrade, AggTradeRow> for PostgresDB {
@@ -169,6 +178,32 @@ impl Database<AggTrade, AggTradeRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    #[allow(clippy::items_after_statements)]
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<AggTradeRow>) -> Result<()> {
+        let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+            "INSERT INTO {table_name} (aggregate_trade_id, price, quantity, first_trade_id, last_trade_id, trade_time, is_buyer_market_maker) "
+        ));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.aggregate_trade_id)
+                    .push_bind(row.price)
+                    .push_bind(row.quantity)
+                    .push_bind(row.first_trade_id)
+                    .push_bind(row.last_trade_id)
+                    .push_bind(row.trade_time)
+                    .push_bind(row.is_buyer_market_maker);
+            })
+            .push(" ON CONFLICT (aggregate_trade_id) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

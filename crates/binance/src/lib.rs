@@ -49,6 +49,9 @@ pub trait Database<T, U> {
 
     /// Inserts a row into the database.
     async fn insert_row(&self, table_name: &str, data: U) -> models::error::Result<()>;
+
+    /// Inserts a row into the database.
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<U>) -> models::error::Result<()>;
 }
 
 const CEX_NAME: &str = "binance";

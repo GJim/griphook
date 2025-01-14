@@ -97,6 +97,15 @@ impl Database<BookTicker, BookTickerRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<BookTickerRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<BookTicker, BookTickerRow> for PostgresDB {
@@ -140,6 +149,29 @@ impl Database<BookTicker, BookTickerRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<BookTickerRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!("INSERT INTO {table_name} (update_id, best_bid_price, best_bid_quantity, best_ask_price, best_ask_quantity) "),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.update_id)
+                    .push_bind(row.best_bid_price)
+                    .push_bind(row.best_bid_quantity)
+                    .push_bind(row.best_ask_price)
+                    .push_bind(row.best_ask_quantity);
+            })
+            .push(" ON CONFLICT (update_id) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

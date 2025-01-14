@@ -156,6 +156,15 @@ impl Database<ForceOrder, ForceOrderRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<ForceOrderRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<ForceOrder, ForceOrderRow> for PostgresDB {
@@ -213,6 +222,38 @@ impl Database<ForceOrder, ForceOrderRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<ForceOrderRow>) -> Result<()> {
+        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (event_time, side, order_type, time_in_force, 
+                quantity, price, average_price, status, last_filled_quantity, filled_quantity, trade_time) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.side)
+                    .push_bind(row.order_type)
+                    .push_bind(row.time_in_force)
+                    .push_bind(row.quantity)
+                    .push_bind(row.price)
+                    .push_bind(row.average_price)
+                    .push_bind(row.status)
+                    .push_bind(row.last_filled_quantity)
+                    .push_bind(row.filled_quantity)
+                    .push_bind(row.trade_time);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

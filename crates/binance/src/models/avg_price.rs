@@ -91,6 +91,15 @@ impl Database<AvgPrice, AvgPriceRow> for ClickhouseDB {
         insert.end().await.context(error::ClickhouseSnafu)?;
         Ok(())
     }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<AvgPriceRow>) -> Result<()> {
+        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
 }
 
 impl Database<AvgPrice, AvgPriceRow> for PostgresDB {
@@ -129,6 +138,27 @@ impl Database<AvgPrice, AvgPriceRow> for PostgresDB {
             .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn insert_row_batch(&self, table_name: &str, data: Vec<AvgPriceRow>) -> Result<()> {
+        let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+            "INSERT INTO {table_name} (interval, average_price, last_trade_time) "
+        ));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.interval)
+                    .push_bind(row.average_price)
+                    .push_bind(row.last_trade_time);
+            })
+            .push(" ON CONFLICT (interval, last_trade_time) DO NOTHING")
+            .build()
+            .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
         Ok(())
     }
 }

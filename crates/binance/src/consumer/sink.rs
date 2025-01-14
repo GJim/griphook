@@ -1,11 +1,13 @@
 use rdkafka::{
-    consumer::{Consumer as KafkaConsumer, StreamConsumer},
+    consumer::{CommitMode, Consumer as KafkaConsumer, StreamConsumer},
+    message::BorrowedMessage,
     Message,
 };
 use snafu::ResultExt;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
@@ -40,33 +42,88 @@ where
     }
 
     #[allow(clippy::missing_errors_doc)]
-    pub async fn run(self, topic: String, subsys: SubsystemHandle) -> Result<()> {
+    pub async fn run(
+        self,
+        topic: String,
+        batch_size: usize,
+        batch_timeout: Duration,
+        subsys: SubsystemHandle,
+    ) -> Result<()> {
         self.consumer.subscribe(&[&topic]).context(error::KafkaConsumerSnafu)?;
 
         // create the table if it doesn't exist
         self.db.ensure_table_exists(&self.table_name).await.context(error::ModelSnafu)?;
 
-        tracing::info!("Starting to consume topic {topic} into table {}", self.table_name);
+        tracing::info!(
+            "Starting to consume topic {topic} into table {} with batch size {} and timeout {:?}",
+            self.table_name,
+            batch_size,
+            batch_timeout
+        );
+
+        let mut messages = Vec::with_capacity(batch_size);
 
         loop {
             tokio::select! {
                 () = subsys.on_shutdown_requested() => {
                     tracing::info!("Shutdown requested");
+                    // Process remaining batch if any
+                    if !messages.is_empty() {
+                        self.process_batch(&messages).await?;
+                    }
                     break;
                 }
-                message_opt = self.consumer.recv() => {
-                    if let Some(message) = message_opt.context(error::KafkaConsumerSnafu)?.payload() {
-                        let event = T::deserialize_from_avro(message)
-                            .context(error::AvroSerializationSnafu)?;
+                message_opt = tokio::time::timeout(batch_timeout, self.consumer.recv()) => {
+                    match message_opt {
+                        Ok(Ok(message)) => {
+                            messages.push(message);
 
-                        tracing::debug!("Received event: {event:?}");
-                        let row = self.db.to_row(event).await.context(error::ModelSnafu)?;
-                        self.db.insert_row(&self.table_name, row).await.context(error::ModelSnafu)?;
+                            if messages.len() >= batch_size {
+                                self.process_batch(&messages).await?;
+                                messages.clear();
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            return Err(e).context(error::KafkaConsumerSnafu);
+                        }
+                        Err(_) => {
+                            // Timeout occurred, process current batch if any
+                            if !messages.is_empty() {
+                                self.process_batch(&messages).await?;
+                                messages.clear();
+                            }
+                        }
                     }
                 }
             }
         }
 
+        Ok(())
+    }
+
+    async fn process_batch(&self, messages: &[BorrowedMessage<'_>]) -> Result<()> {
+        // Convert events to rows
+        let mut rows = Vec::with_capacity(messages.len());
+        for message in messages {
+            if let Some(payload) = message.payload() {
+                let event =
+                    T::deserialize_from_avro(payload).context(error::AvroSerializationSnafu)?;
+
+                let row = self.db.to_row(event).await.context(error::ModelSnafu)?;
+                rows.push(row);
+            }
+        }
+
+        self.db.insert_row_batch(&self.table_name, rows).await.context(error::ModelSnafu)?;
+
+        // Commit all messages in the batch
+        if let Some(last_message) = messages.last() {
+            self.consumer
+                .commit_message(last_message, CommitMode::Async)
+                .context(error::KafkaConsumerSnafu)?;
+        }
+
+        tracing::debug!("Processed batch of {} messages", messages.len());
         Ok(())
     }
 }

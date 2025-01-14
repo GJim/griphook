@@ -59,6 +59,9 @@ pub enum Commands {
             value_enum
         )]
         offset_reset: OffsetReset,
+
+        #[clap(long = "client-id", short = 'c', help = "The Kafka client id to use")]
+        client_id: Option<String>,
     },
 
     #[command(about = "Push messages from a specific Kafka topic to storage")]
@@ -75,7 +78,6 @@ pub enum Commands {
         )]
         offset_reset: OffsetReset,
 
-        // #[arg(help = "The storage to sink to")]
         #[clap(
             long = "storage",
             short = 's',
@@ -84,6 +86,15 @@ pub enum Commands {
             value_enum
         )]
         storage: Storage,
+
+        #[clap(long = "client-id", short = 'c', help = "The Kafka client id to use")]
+        client_id: Option<String>,
+
+        #[clap(long = "batch-size", short = 'b', help = "The batch size to use")]
+        batch_size: Option<usize>,
+
+        #[clap(long = "batch-timeout", short = 't', help = "The batch timeout to use")]
+        batch_timeout: Option<u64>,
     },
 }
 
@@ -107,8 +118,8 @@ impl Commands {
                 .await
                 .context(error::ShutdownTokioRuntimeSnafu)
             }
-            Self::Inspect { topic, offset_reset } => {
-                let consumer = config.kafka.create_consumer(offset_reset.as_ref())?;
+            Self::Inspect { topic, offset_reset, client_id } => {
+                let consumer = config.kafka.create_consumer(offset_reset.as_ref(), client_id)?;
                 let stream_type = StreamType::try_from(&topic)?;
                 tracing::info!("Starting to inspect stream type: {stream_type:?}");
                 Toplevel::new(|s| async move {
@@ -223,8 +234,11 @@ impl Commands {
                 .await
                 .context(error::ShutdownTokioRuntimeSnafu)
             }
-            Self::Sink { topic, offset_reset, storage } => {
-                let consumer = config.kafka.create_consumer(offset_reset.as_ref())?;
+            Self::Sink { topic, offset_reset, storage, client_id, batch_size, batch_timeout } => {
+                let consumer = config.kafka.create_consumer(offset_reset.as_ref(), client_id)?;
+                let batch_size = batch_size.unwrap_or(config.kafka.batch_size);
+                let batch_timeout =
+                    Duration::from_secs(batch_timeout.unwrap_or(config.kafka.batch_timeout));
                 let stream_type = StreamType::try_from(&topic)?;
                 let table_name = topic.replace('.', "_");
                 let clickhouse_client = config.clickhouse.create_client();
@@ -232,7 +246,7 @@ impl Commands {
                 let postgres_client = config.postgres.create_pool().await?;
                 let postgres_db = Arc::new(PostgresDB::new(postgres_client));
 
-                Toplevel::new(|s| async move {
+                Toplevel::new(move |s| async move {
                     let _unused = match (storage, stream_type) {
                         (Storage::Clickhouse, StreamType::Trade) => s.start(SubsystemBuilder::new(
                             "binance-clickhouse-trade-sink",
@@ -242,7 +256,7 @@ impl Commands {
                                     griphook_binance::Trade,
                                     griphook_binance::TradeRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             },
                         )),
                         (Storage::Postgres, StreamType::Trade) => s.start(SubsystemBuilder::new(
@@ -253,7 +267,7 @@ impl Commands {
                                     griphook_binance::Trade,
                                     griphook_binance::TradeRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             },
                         )),
                         (Storage::Clickhouse, StreamType::AggTrade) => s.start(
@@ -263,7 +277,7 @@ impl Commands {
                                     griphook_binance::AggTrade,
                                     griphook_binance::AggTradeRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::AggTrade) => s.start(
@@ -273,7 +287,7 @@ impl Commands {
                                     griphook_binance::AggTrade,
                                     griphook_binance::AggTradeRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::BookTicker) => s.start(
@@ -283,7 +297,7 @@ impl Commands {
                                     griphook_binance::BookTicker,
                                     griphook_binance::BookTickerRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::BookTicker) => s.start(
@@ -293,7 +307,7 @@ impl Commands {
                                     griphook_binance::BookTicker,
                                     griphook_binance::BookTickerRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::Kline) => s.start(SubsystemBuilder::new(
@@ -304,7 +318,7 @@ impl Commands {
                                     griphook_binance::Kline,
                                     griphook_binance::KlineRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             },
                         )),
                         (Storage::Postgres, StreamType::Kline) => s.start(SubsystemBuilder::new(
@@ -315,7 +329,7 @@ impl Commands {
                                     griphook_binance::Kline,
                                     griphook_binance::KlineRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             },
                         )),
                         (Storage::Clickhouse, StreamType::MiniTicker) => s.start(
@@ -325,7 +339,7 @@ impl Commands {
                                     griphook_binance::MiniTicker,
                                     griphook_binance::MiniTickerRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::MiniTicker) => s.start(
@@ -335,7 +349,7 @@ impl Commands {
                                     griphook_binance::MiniTicker,
                                     griphook_binance::MiniTickerRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::Ticker) => s.start(
@@ -345,7 +359,7 @@ impl Commands {
                                     griphook_binance::Ticker,
                                     griphook_binance::TickerRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::Ticker) => s.start(SubsystemBuilder::new(
@@ -356,7 +370,7 @@ impl Commands {
                                     griphook_binance::Ticker,
                                     griphook_binance::TickerRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             },
                         )),
                         (Storage::Clickhouse, StreamType::BookDepth) => s.start(
@@ -366,7 +380,7 @@ impl Commands {
                                     griphook_binance::BookDepth,
                                     griphook_binance::BookDepthNestedRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::BookDepth) => s.start(
@@ -376,7 +390,7 @@ impl Commands {
                                     griphook_binance::BookDepth,
                                     griphook_binance::BookDepthRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::PartialBookDepth) => {
@@ -388,7 +402,7 @@ impl Commands {
                                         griphook_binance::PartialBookDepth,
                                         griphook_binance::PartialBookDepthNestedRow,
                                     > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                    consumer.run(topic, h)
+                                    consumer.run(topic, batch_size, batch_timeout, h)
                                 },
                             ))
                         }
@@ -401,7 +415,7 @@ impl Commands {
                                         griphook_binance::PartialBookDepth,
                                         griphook_binance::PartialBookDepthRow,
                                     > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                    consumer.run(topic, h)
+                                    consumer.run(topic, batch_size, batch_timeout, h)
                                 },
                             ))
                         }
@@ -414,7 +428,7 @@ impl Commands {
                                         griphook_binance::WindowTicker,
                                         griphook_binance::WindowTickerRow,
                                     > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                    consumer.run(topic, h)
+                                    consumer.run(topic, batch_size, batch_timeout, h)
                                 },
                             ))
                         }
@@ -425,7 +439,7 @@ impl Commands {
                                     griphook_binance::WindowTicker,
                                     griphook_binance::WindowTickerRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::ForceOrder) => s.start(
@@ -435,7 +449,7 @@ impl Commands {
                                     griphook_binance::ForceOrder,
                                     griphook_binance::ForceOrderRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::ForceOrder) => s.start(
@@ -445,7 +459,7 @@ impl Commands {
                                     griphook_binance::ForceOrder,
                                     griphook_binance::ForceOrderRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::MarkPrice) => s.start(
@@ -455,7 +469,7 @@ impl Commands {
                                     griphook_binance::MarkPrice,
                                     griphook_binance::MarkPriceRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::MarkPrice) => s.start(
@@ -465,7 +479,7 @@ impl Commands {
                                     griphook_binance::MarkPrice,
                                     griphook_binance::MarkPriceRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Clickhouse, StreamType::ContinuousKline) => {
@@ -477,7 +491,7 @@ impl Commands {
                                         griphook_binance::ContinuousKline,
                                         griphook_binance::ContinuousKlineRow,
                                     > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                    consumer.run(topic, h)
+                                    consumer.run(topic, batch_size, batch_timeout, h)
                                 },
                             ))
                         }
@@ -490,7 +504,7 @@ impl Commands {
                                         griphook_binance::ContinuousKline,
                                         griphook_binance::ContinuousKlineRow,
                                     > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                    consumer.run(topic, h)
+                                    consumer.run(topic, batch_size, batch_timeout, h)
                                 },
                             ))
                         }
@@ -501,7 +515,7 @@ impl Commands {
                                     griphook_binance::AvgPrice,
                                     griphook_binance::AvgPriceRow,
                                 > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                         (Storage::Postgres, StreamType::AvgPrice) => s.start(
@@ -511,7 +525,7 @@ impl Commands {
                                     griphook_binance::AvgPrice,
                                     griphook_binance::AvgPriceRow,
                                 > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, h)
+                                consumer.run(topic, batch_size, batch_timeout, h)
                             }),
                         ),
                     };

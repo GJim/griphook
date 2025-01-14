@@ -17,6 +17,12 @@ pub struct KafkaConfig {
     #[serde(default = "KafkaConfig::default_retry")]
     pub retry: u64,
 
+    #[serde(default = "KafkaConfig::default_batch_size")]
+    pub batch_size: usize,
+
+    #[serde(default = "KafkaConfig::default_batch_timeout")]
+    pub batch_timeout: u64,
+
     #[serde(default = "KafkaConfig::default_compression_type")]
     pub compression_type: Option<String>,
 
@@ -30,6 +36,8 @@ impl Default for KafkaConfig {
             brokers: Self::default_brokers(),
             client_id: Self::default_client_id(),
             retry: Self::default_retry(),
+            batch_size: Self::default_batch_size(),
+            batch_timeout: Self::default_batch_timeout(),
             compression_type: Self::default_compression_type(),
             compression_level: Self::default_compression_level(),
         }
@@ -53,6 +61,18 @@ impl KafkaConfig {
     #[must_use]
     pub const fn default_retry() -> u64 {
         3
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn default_batch_size() -> usize {
+        100
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn default_batch_timeout() -> u64 {
+        10
     }
 
     #[inline]
@@ -93,8 +113,9 @@ impl KafkaConfig {
     pub fn create_consumer(
         &self,
         offset_reset: &str,
+        client_id: Option<String>,
     ) -> Result<StreamConsumer, ConfigError::Error> {
-        let group_id = format!("{}-inspector", self.client_id);
+        let group_id = client_id.unwrap_or_else(|| self.client_id.clone());
         ClientConfig::new()
             .set("group.id", group_id)
             .set("bootstrap.servers", self.brokers.to_string())
