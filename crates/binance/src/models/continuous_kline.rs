@@ -1,7 +1,7 @@
 use crate::{
     models::{
         error::{self, Result},
-        Avro,
+        Avro, ClickhouseRow,
     },
     ClickhouseDB, Database, PostgresDB,
 };
@@ -120,6 +120,10 @@ pub struct ContinuousKlineRow {
     pub taker_buy_quote_volume: f64,
 }
 
+impl ClickhouseRow for ContinuousKlineRow {
+    type Row = Self;
+}
+
 impl TryFrom<ContinuousKline> for ContinuousKlineRow {
     type Error = error::Error;
 
@@ -183,10 +187,7 @@ impl Database<ContinuousKline, ContinuousKlineRow> for ClickhouseDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: ContinuousKlineRow) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        insert.write(&data).await.context(error::ClickhouseSnafu)?;
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        ContinuousKlineRow::insert_row(&self.client, table_name, data).await
     }
 
     async fn insert_row_batch(
@@ -194,12 +195,7 @@ impl Database<ContinuousKline, ContinuousKlineRow> for ClickhouseDB {
         table_name: &str,
         data: Vec<ContinuousKlineRow>,
     ) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        for row in data {
-            insert.write(&row).await.context(error::ClickhouseSnafu)?;
-        }
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        ContinuousKlineRow::insert_row_batch(&self.client, table_name, data).await
     }
 }
 

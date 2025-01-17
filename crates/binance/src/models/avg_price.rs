@@ -1,7 +1,7 @@
 use crate::{
     models::{
         error::{self, Result},
-        Avro,
+        Avro, ClickhouseRow,
     },
     ClickhouseDB, Database, PostgresDB,
 };
@@ -65,6 +65,10 @@ impl TryFrom<AvgPrice> for AvgPriceRow {
     }
 }
 
+impl ClickhouseRow for AvgPriceRow {
+    type Row = Self;
+}
+
 impl Database<AvgPrice, AvgPriceRow> for ClickhouseDB {
     async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
         let query = format!(
@@ -86,19 +90,11 @@ impl Database<AvgPrice, AvgPriceRow> for ClickhouseDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: AvgPriceRow) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        insert.write(&data).await.context(error::ClickhouseSnafu)?;
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        AvgPriceRow::insert_row(&self.client, table_name, data).await
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<AvgPriceRow>) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        for row in data {
-            insert.write(&row).await.context(error::ClickhouseSnafu)?;
-        }
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        AvgPriceRow::insert_row_batch(&self.client, table_name, data).await
     }
 }
 

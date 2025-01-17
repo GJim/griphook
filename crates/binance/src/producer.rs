@@ -1,10 +1,13 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use snafu::ResultExt;
 use tokio_graceful_shutdown::SubsystemHandle;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Bytes, Message},
+};
 
 use crate::{
     error::{
@@ -65,6 +68,8 @@ pub async fn run(
     let max_retries = 3;
     let mut retry_count = 0;
     let mut backoff_duration = Duration::from_secs(1);
+    let mut last_pong = Instant::now();
+    let pong_interval = Duration::from_secs(300); // 5 minutes
 
     loop {
         tracing::info!("Connecting to {}", subscription_endpoint);
@@ -95,6 +100,14 @@ pub async fn run(
                         if let Some(msg) = msg_opt {
                             let msg = msg.context(WebSocketMessageSnafu)?;
                             tracing::debug!("Received message: {msg:?}");
+
+                            // Check if we need to send a pong
+                            if last_pong.elapsed() >= pong_interval {
+                                tracing::info!("Sending auto pong");
+                                write.send(Message::Pong(Bytes::new())).await.context(WebSocketMessageSnafu)?;
+                                last_pong = Instant::now();
+                            }
+
                             match msg {
                                 Message::Text(_) | Message::Binary(_) => {
                                     let data = msg.into_data();

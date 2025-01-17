@@ -1,7 +1,7 @@
 use crate::{
     models::{
         error::{self, Result},
-        Avro,
+        Avro, ClickhouseRow,
     },
     ClickhouseDB, Database, PostgresDB,
 };
@@ -64,6 +64,10 @@ pub struct TradeRow {
     pub is_buyer_market_maker: bool,
 }
 
+impl ClickhouseRow for TradeRow {
+    type Row = Self;
+}
+
 impl TryFrom<Trade> for TradeRow {
     type Error = error::Error;
     fn try_from(value: Trade) -> Result<Self> {
@@ -102,19 +106,11 @@ impl Database<Trade, TradeRow> for ClickhouseDB {
 
     /// Inserts a row into the database.
     async fn insert_row(&self, table_name: &str, data: TradeRow) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        insert.write(&data).await.context(error::ClickhouseSnafu)?;
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        TradeRow::insert_row(&self.client, table_name, data).await
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<TradeRow>) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        for row in data {
-            insert.write(&row).await.context(error::ClickhouseSnafu)?;
-        }
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        TradeRow::insert_row_batch(&self.client, table_name, data).await
     }
 }
 

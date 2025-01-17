@@ -57,3 +57,30 @@ impl TryFrom<Order> for OrderRow {
         })
     }
 }
+
+#[allow(dead_code)]
+pub trait ClickhouseRow {
+    type Row: clickhouse::Row + Serialize;
+
+    async fn insert_row(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Self::Row,
+    ) -> error::Result<()> {
+        let mut insert = client.insert(table_name).context(error::ClickhouseSnafu)?;
+        insert.write(&data).await.context(error::ClickhouseSnafu)?;
+        insert.end().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn insert_row_batch(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self::Row>,
+    ) -> error::Result<()> {
+        let mut insert = client.insert(table_name).context(error::ClickhouseSnafu)?;
+        for row in data {
+            insert.write(&row).await.context(error::ClickhouseSnafu)?;
+        }
+        insert.end().await.context(error::ClickhouseSnafu)
+    }
+}

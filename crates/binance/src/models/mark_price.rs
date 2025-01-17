@@ -1,7 +1,7 @@
 use crate::{
     models::{
         error::{self, Result},
-        Avro,
+        Avro, ClickhouseRow,
     },
     ClickhouseDB, Database, PostgresDB,
 };
@@ -63,6 +63,10 @@ pub struct MarkPriceRow {
     pub next_funding_time: i64,
 }
 
+impl ClickhouseRow for MarkPriceRow {
+    type Row = Self;
+}
+
 impl TryFrom<MarkPrice> for MarkPriceRow {
     type Error = error::Error;
 
@@ -105,19 +109,11 @@ impl Database<MarkPrice, MarkPriceRow> for ClickhouseDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: MarkPriceRow) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        insert.write(&data).await.context(error::ClickhouseSnafu)?;
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        MarkPriceRow::insert_row(&self.client, table_name, data).await
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<MarkPriceRow>) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        for row in data {
-            insert.write(&row).await.context(error::ClickhouseSnafu)?;
-        }
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        MarkPriceRow::insert_row_batch(&self.client, table_name, data).await
     }
 }
 

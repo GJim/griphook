@@ -1,7 +1,7 @@
 use crate::{
     models::{
         error::{self, Result},
-        Avro, Order, OrderRow,
+        Avro, ClickhouseRow, Order, OrderRow,
     },
     ClickhouseDB, Database, PostgresDB,
 };
@@ -102,6 +102,10 @@ pub struct PartialBookDepthNestedRow {
     pub asks_quantity: Vec<f64>,
 }
 
+impl ClickhouseRow for PartialBookDepthNestedRow {
+    type Row = Self;
+}
+
 impl TryFrom<PartialBookDepth> for PartialBookDepthNestedRow {
     type Error = error::Error;
 
@@ -160,10 +164,7 @@ impl Database<PartialBookDepth, PartialBookDepthNestedRow> for ClickhouseDB {
     }
 
     async fn insert_row(&self, table_name: &str, data: PartialBookDepthNestedRow) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        insert.write(&data).await.context(error::ClickhouseSnafu)?;
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        PartialBookDepthNestedRow::insert_row(&self.client, table_name, data).await
     }
 
     async fn insert_row_batch(
@@ -171,12 +172,7 @@ impl Database<PartialBookDepth, PartialBookDepthNestedRow> for ClickhouseDB {
         table_name: &str,
         data: Vec<PartialBookDepthNestedRow>,
     ) -> Result<()> {
-        let mut insert = self.client.insert(table_name).context(error::ClickhouseSnafu)?;
-        for row in data {
-            insert.write(&row).await.context(error::ClickhouseSnafu)?;
-        }
-        insert.end().await.context(error::ClickhouseSnafu)?;
-        Ok(())
+        PartialBookDepthNestedRow::insert_row_batch(&self.client, table_name, data).await
     }
 }
 
