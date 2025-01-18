@@ -11,9 +11,9 @@ use std::time::Duration;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
+    database::Database,
     error::{self, Result},
     models::Avro,
-    Database,
 };
 
 #[allow(dead_code)]

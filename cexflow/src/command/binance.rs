@@ -9,7 +9,10 @@ use crate::{
     Config,
 };
 
-use griphook_binance::{ClickhouseDB, Consumer, PostgresDB};
+use griphook_binance::{
+    database::{ClickhouseDB, PostgresDB},
+    Consumer,
+};
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum OffsetReset {
@@ -110,7 +113,12 @@ impl Commands {
                 Toplevel::new(|s| async move {
                     let _unused =
                         s.start(SubsystemBuilder::new("binance-trade-stream", move |h| {
-                            griphook_binance::run(trading_type, subscription_endpoint, producer, h)
+                            griphook_binance::producer::run(
+                                trading_type,
+                                subscription_endpoint,
+                                producer,
+                                h,
+                            )
                         }));
                 })
                 .catch_signals()

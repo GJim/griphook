@@ -1,9 +1,9 @@
 use crate::{
+    database::{ClickhouseDB, Database, PostgresDB},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow, Order, OrderRow,
     },
-    ClickhouseDB, Database, PostgresDB,
 };
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
