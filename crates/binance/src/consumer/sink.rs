@@ -64,11 +64,12 @@ impl Sink {
         loop {
             tokio::select! {
                 () = subsys.on_shutdown_requested() => {
-                    tracing::info!("Shutdown requested");
+                    tracing::info!("Sink service shutdown requested");
                     // Process remaining batch if any
                     if !messages.is_empty() {
                         self.process_batch(&stream_type, &database_type, &messages).await?;
                     }
+                    tracing::info!("Sink service shutdown completed");
                     break;
                 }
                 message_opt = tokio::time::timeout(batch_timeout, self.consumer.recv()) => {
