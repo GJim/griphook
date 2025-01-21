@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -168,7 +169,7 @@ impl Database<MiniTicker, MiniTickerRow> for PostgresDB {
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<MiniTickerRow>) -> Result<()> {
-        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             format!("INSERT INTO {table_name} (event_time, close_price, open_price, high_price, low_price, base_volume, quote_volume) "),
         );
 
@@ -186,6 +187,88 @@ impl Database<MiniTicker, MiniTickerRow> for PostgresDB {
             .push(" ON CONFLICT (event_time) DO NOTHING")
             .build()
             .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
+impl Storage<clickhouse::Client> for MiniTickerRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time Int64,
+                close_price Float64,
+                open_price Float64,
+                high_price Float64,
+                low_price Float64,
+                base_volume Float64,
+                quote_volume Float64
+            ) ENGINE = MergeTree()
+            ORDER BY (event_time)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for MiniTickerRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time BIGINT NOT NULL,
+                close_price DOUBLE PRECISION NOT NULL,
+                open_price DOUBLE PRECISION NOT NULL,
+                high_price DOUBLE PRECISION NOT NULL,
+                low_price DOUBLE PRECISION NOT NULL,
+                base_volume DOUBLE PRECISION NOT NULL,
+                quote_volume DOUBLE PRECISION NOT NULL,
+                PRIMARY KEY (event_time)
+            )
+            "#,
+        );
+        let _unused = sqlx::query(&query).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+            format!("INSERT INTO {table_name} (event_time, close_price, open_price, high_price, low_price, base_volume, quote_volume) "),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.close_price)
+                    .push_bind(row.open_price)
+                    .push_bind(row.high_price)
+                    .push_bind(row.low_price)
+                    .push_bind(row.base_volume)
+                    .push_bind(row.quote_volume);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(client)
             .await
             .context(error::PostgresSnafu)?;
 

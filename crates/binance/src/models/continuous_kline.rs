@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -276,7 +277,11 @@ impl Database<ContinuousKline, ContinuousKlineRow> for PostgresDB {
         table_name: &str,
         data: Vec<ContinuousKlineRow>,
     ) -> Result<()> {
-        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             format!(
                 "INSERT INTO {table_name} (event_time, start_time, close_time, interval, 
                 first_update_id, last_update_id, open_price, close_price, high_price, low_price, 
@@ -307,6 +312,119 @@ impl Database<ContinuousKline, ContinuousKlineRow> for PostgresDB {
             .push(" ON CONFLICT (event_time) DO NOTHING")
             .build()
             .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
+impl Storage<clickhouse::Client> for ContinuousKlineRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time Int64,
+                start_time Int64,
+                close_time Int64,
+                interval String,
+                first_update_id Int64,
+                last_update_id Int64,
+                open_price Float64,
+                close_price Float64,
+                high_price Float64,
+                low_price Float64,
+                volume Float64,
+                number_of_trades Int64,
+                is_closed Bool,
+                quote_volume Float64,
+                taker_buy_volume Float64,
+                taker_buy_quote_volume Float64
+            ) ENGINE = MergeTree()
+            ORDER BY (event_time)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for ContinuousKlineRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time BIGINT NOT NULL,
+                start_time BIGINT NOT NULL,
+                close_time BIGINT NOT NULL,
+                interval VARCHAR(10) NOT NULL,
+                first_update_id BIGINT NOT NULL,
+                last_update_id BIGINT NOT NULL,
+                open_price DOUBLE PRECISION NOT NULL,
+                close_price DOUBLE PRECISION NOT NULL,
+                high_price DOUBLE PRECISION NOT NULL,
+                low_price DOUBLE PRECISION NOT NULL,
+                volume DOUBLE PRECISION NOT NULL,
+                number_of_trades BIGINT NOT NULL,
+                is_closed BOOLEAN NOT NULL,
+                quote_volume DOUBLE PRECISION NOT NULL,
+                taker_buy_volume DOUBLE PRECISION NOT NULL,
+                taker_buy_quote_volume DOUBLE PRECISION NOT NULL,
+                PRIMARY KEY (event_time)
+            )
+            "#,
+        );
+        let _unused = sqlx::query(&query).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (event_time, start_time, close_time, interval, 
+                first_update_id, last_update_id, open_price, close_price, high_price, low_price, 
+                volume, number_of_trades, is_closed, quote_volume, taker_buy_volume, taker_buy_quote_volume) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.start_time)
+                    .push_bind(row.close_time)
+                    .push_bind(row.interval)
+                    .push_bind(row.first_update_id)
+                    .push_bind(row.last_update_id)
+                    .push_bind(row.open_price)
+                    .push_bind(row.close_price)
+                    .push_bind(row.high_price)
+                    .push_bind(row.low_price)
+                    .push_bind(row.volume)
+                    .push_bind(row.number_of_trades)
+                    .push_bind(row.is_closed)
+                    .push_bind(row.quote_volume)
+                    .push_bind(row.taker_buy_volume)
+                    .push_bind(row.taker_buy_quote_volume);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(client)
             .await
             .context(error::PostgresSnafu)?;
 

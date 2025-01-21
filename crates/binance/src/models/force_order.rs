@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -222,7 +223,7 @@ impl Database<ForceOrder, ForceOrderRow> for PostgresDB {
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<ForceOrderRow>) -> Result<()> {
-        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             format!(
                 "INSERT INTO {table_name} (event_time, side, order_type, time_in_force, 
                 quantity, price, average_price, status, last_filled_quantity, filled_quantity, trade_time) "
@@ -247,6 +248,103 @@ impl Database<ForceOrder, ForceOrderRow> for PostgresDB {
             .push(" ON CONFLICT (event_time) DO NOTHING")
             .build()
             .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
+impl Storage<clickhouse::Client> for ForceOrderRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time Int64,
+                side String,
+                order_type String,
+                time_in_force String,
+                quantity Float64,
+                price Float64,
+                average_price Float64,
+                status String,
+                last_filled_quantity Float64,
+                filled_quantity Float64,
+                trade_time Int64
+            ) ENGINE = MergeTree()
+            ORDER BY (event_time)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for ForceOrderRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time BIGINT NOT NULL,
+                side VARCHAR(10) NOT NULL,
+                order_type VARCHAR(20) NOT NULL,
+                time_in_force VARCHAR(10) NOT NULL,
+                quantity DOUBLE PRECISION NOT NULL,
+                price DOUBLE PRECISION NOT NULL,
+                average_price DOUBLE PRECISION NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                last_filled_quantity DOUBLE PRECISION NOT NULL,
+                filled_quantity DOUBLE PRECISION NOT NULL,
+                trade_time BIGINT NOT NULL,
+                PRIMARY KEY (event_time)
+            )
+            "#,
+        );
+        let _unused = sqlx::query(&query).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (event_time, side, order_type, time_in_force, 
+                quantity, price, average_price, status, last_filled_quantity, filled_quantity, trade_time) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.side)
+                    .push_bind(row.order_type)
+                    .push_bind(row.time_in_force)
+                    .push_bind(row.quantity)
+                    .push_bind(row.price)
+                    .push_bind(row.average_price)
+                    .push_bind(row.status)
+                    .push_bind(row.last_filled_quantity)
+                    .push_bind(row.filled_quantity)
+                    .push_bind(row.trade_time);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(client)
             .await
             .context(error::PostgresSnafu)?;
 

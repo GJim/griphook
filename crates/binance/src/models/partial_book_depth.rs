@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow, Order, OrderRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -220,9 +221,8 @@ impl Database<PartialBookDepth, PartialBookDepthRow> for PostgresDB {
         table_name: &str,
         data: Vec<PartialBookDepthRow>,
     ) -> Result<()> {
-        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
-            format!("INSERT INTO {table_name} (last_update_id, bids, asks) "),
-        );
+        let mut query_builder: QueryBuilder<'_, Postgres> =
+            QueryBuilder::new(format!("INSERT INTO {table_name} (last_update_id, bids, asks) "));
 
         let _unused = query_builder
             .push_values(data, |mut b, row| {
@@ -234,6 +234,80 @@ impl Database<PartialBookDepth, PartialBookDepthRow> for PostgresDB {
             .push(" ON CONFLICT (last_update_id) DO NOTHING")
             .build()
             .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
+impl Storage<clickhouse::Client> for PartialBookDepthNestedRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let create_table = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                last_update_id Int64,
+                bids Nested (
+                    price Float64,
+                    quantity Float64
+                ),
+                asks Nested (
+                    price Float64,
+                    quantity Float64
+                )
+            )
+            ENGINE = MergeTree()
+            ORDER BY (last_update_id)
+            "#
+        );
+        client.query(&create_table).execute().await.context(error::ClickhouseSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for PartialBookDepthRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let create_table = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                last_update_id BIGINT NOT NULL,
+                bids JSONB NOT NULL,
+                asks JSONB NOT NULL,
+                PRIMARY KEY (last_update_id)
+            )
+            "#
+        );
+        let _unused =
+            sqlx::query(&create_table).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        let mut query_builder: QueryBuilder<'_, Postgres> =
+            QueryBuilder::new(format!("INSERT INTO {table_name} (last_update_id, bids, asks) "));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.last_update_id)
+                    .push_bind(serde_json::to_value(&row.bids).unwrap())
+                    .push_bind(serde_json::to_value(&row.asks).unwrap());
+            })
+            .push(" ON CONFLICT (last_update_id) DO NOTHING")
+            .build()
+            .execute(client)
             .await
             .context(error::PostgresSnafu)?;
 

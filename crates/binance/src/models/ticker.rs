@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -299,7 +300,7 @@ impl Database<Ticker, TickerRow> for PostgresDB {
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<TickerRow>) -> Result<()> {
-        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             format!(
                 "INSERT INTO {table_name} (event_time, price_change, price_change_percent, weighted_avg_price, \
                 first_trade_price, last_price, last_quantity, best_bid_price, best_bid_quantity, best_ask_price, \
@@ -337,6 +338,137 @@ impl Database<Ticker, TickerRow> for PostgresDB {
             .push(" ON CONFLICT (event_time) DO NOTHING")
             .build()
             .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
+impl Storage<clickhouse::Client> for TickerRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                event_time Int64,
+                price_change Float64,
+                price_change_percent Float64,
+                weighted_avg_price Float64,
+                first_trade_price Float64,
+                last_price Float64,
+                last_quantity Float64,
+                best_bid_price Float64,
+                best_bid_quantity Float64,
+                best_ask_price Float64,
+                best_ask_quantity Float64,
+                open_price Float64,
+                high_price Float64,
+                low_price Float64,
+                total_traded_base_asset_volume Float64,
+                total_traded_quote_asset_volume Float64,
+                statistics_open_time Int64,
+                statistics_close_time Int64,
+                first_trade_id Int64,
+                last_trade_id Int64,
+                total_trades Int64
+            ) ENGINE = MergeTree()
+            ORDER BY (event_time)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for TickerRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let create_table = format!(
+            r#"
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    event_time BIGINT,
+                    price_change DOUBLE PRECISION,
+                    price_change_percent DOUBLE PRECISION,
+                    weighted_avg_price DOUBLE PRECISION,
+                    first_trade_price DOUBLE PRECISION,
+                    last_price DOUBLE PRECISION,
+                    last_quantity DOUBLE PRECISION,
+                    best_bid_price DOUBLE PRECISION,
+                    best_bid_quantity DOUBLE PRECISION,
+                    best_ask_price DOUBLE PRECISION,
+                    best_ask_quantity DOUBLE PRECISION,
+                    open_price DOUBLE PRECISION,
+                    high_price DOUBLE PRECISION,
+                    low_price DOUBLE PRECISION,
+                    total_traded_base_asset_volume DOUBLE PRECISION,
+                    total_traded_quote_asset_volume DOUBLE PRECISION,
+                    statistics_open_time BIGINT,
+                    statistics_close_time BIGINT,
+                    first_trade_id BIGINT,
+                    last_trade_id BIGINT,
+                    total_trades BIGINT,
+                    PRIMARY KEY (event_time)
+                )
+                "#
+        );
+        let _unused =
+            sqlx::query(&create_table).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+            format!(
+                "INSERT INTO {table_name} (event_time, price_change, price_change_percent, weighted_avg_price, \
+                first_trade_price, last_price, last_quantity, best_bid_price, best_bid_quantity, best_ask_price, \
+                best_ask_quantity, open_price, high_price, low_price, total_traded_base_asset_volume, \
+                total_traded_quote_asset_volume, statistics_open_time, statistics_close_time, first_trade_id, \
+                last_trade_id, total_trades) "
+            ),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.event_time)
+                    .push_bind(row.price_change)
+                    .push_bind(row.price_change_percent)
+                    .push_bind(row.weighted_avg_price)
+                    .push_bind(row.first_trade_price)
+                    .push_bind(row.last_price)
+                    .push_bind(row.last_quantity)
+                    .push_bind(row.best_bid_price)
+                    .push_bind(row.best_bid_quantity)
+                    .push_bind(row.best_ask_price)
+                    .push_bind(row.best_ask_quantity)
+                    .push_bind(row.open_price)
+                    .push_bind(row.high_price)
+                    .push_bind(row.low_price)
+                    .push_bind(row.total_traded_base_asset_volume)
+                    .push_bind(row.total_traded_quote_asset_volume)
+                    .push_bind(row.statistics_open_time)
+                    .push_bind(row.statistics_close_time)
+                    .push_bind(row.first_trade_id)
+                    .push_bind(row.last_trade_id)
+                    .push_bind(row.total_trades);
+            })
+            .push(" ON CONFLICT (event_time) DO NOTHING")
+            .build()
+            .execute(client)
             .await
             .context(error::PostgresSnafu)?;
 

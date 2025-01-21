@@ -77,4 +77,17 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Sink operation error"))]
+    SinkOperation {},
+
+    #[snafu(display("Cache lock error: {source}"))]
+    CacheTryLock {
+        source: tokio::sync::TryLockError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid stream topic: {topic}"))]
+    InvalidStreamTopic { topic: String },
 }

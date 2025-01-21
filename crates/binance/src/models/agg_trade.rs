@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -96,6 +97,84 @@ impl ClickhouseRow for AggTradeRow {
     type Row = Self;
 }
 
+impl Storage<clickhouse::Client> for AggTradeRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                aggregate_trade_id Int64,
+                price Float64,
+                quantity Float64,
+                first_trade_id Int64,
+                last_trade_id Int64,
+                trade_time Int64,
+                is_buyer_market_maker Boolean
+            ) ENGINE = MergeTree()
+            ORDER BY (aggregate_trade_id)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for AggTradeRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                aggregate_trade_id BIGINT NOT NULL,
+                price DOUBLE PRECISION NOT NULL,
+                quantity DOUBLE PRECISION NOT NULL,
+                first_trade_id BIGINT NOT NULL,
+                last_trade_id BIGINT NOT NULL,
+                trade_time BIGINT NOT NULL,
+                is_buyer_market_maker BOOLEAN NOT NULL,
+                PRIMARY KEY (aggregate_trade_id)
+            )
+            "#,
+        );
+        let _unused = sqlx::query(&query).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        let mut query_builder = QueryBuilder::<Postgres>::new(format!(
+            "INSERT INTO {table_name} (aggregate_trade_id, price, quantity, first_trade_id, last_trade_id, trade_time, is_buyer_market_maker) "
+        ));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.aggregate_trade_id)
+                    .push_bind(row.price)
+                    .push_bind(row.quantity)
+                    .push_bind(row.first_trade_id)
+                    .push_bind(row.last_trade_id)
+                    .push_bind(row.trade_time)
+                    .push_bind(row.is_buyer_market_maker);
+            })
+            .push(" ON CONFLICT (aggregate_trade_id) DO NOTHING")
+            .build()
+            .execute(client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
 impl Database<AggTrade, AggTradeRow> for ClickhouseDB {
     async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
         let query = format!(
@@ -179,7 +258,7 @@ impl Database<AggTrade, AggTradeRow> for PostgresDB {
 
     #[allow(clippy::items_after_statements)]
     async fn insert_row_batch(&self, table_name: &str, data: Vec<AggTradeRow>) -> Result<()> {
-        let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+        let mut query_builder = QueryBuilder::<Postgres>::new(format!(
             "INSERT INTO {table_name} (aggregate_trade_id, price, quantity, first_trade_id, last_trade_id, trade_time, is_buyer_market_maker) "
         ));
 

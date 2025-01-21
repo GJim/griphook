@@ -5,14 +5,46 @@ mod kafka;
 mod log;
 mod postgres;
 
-use std::path::{Path, PathBuf};
-
+use clap::ValueEnum;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use std::path::{Path, PathBuf};
+
+use griphook_binance::database::DatabaseType;
 
 pub use self::error::{Error, Result};
 use self::{binance::BinanceConfig, kafka::KafkaConfig, log::LogConfig};
+
+#[derive(Debug, Clone, ValueEnum, Serialize, Deserialize)]
+pub enum Storage {
+    Clickhouse,
+    Postgres,
+}
+
+impl AsRef<str> for Storage {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Clickhouse => "clickhouse",
+            Self::Postgres => "postgres",
+        }
+    }
+}
+
+impl std::fmt::Display for Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_ref())
+    }
+}
+
+impl From<Storage> for DatabaseType {
+    fn from(value: Storage) -> Self {
+        match value {
+            Storage::Clickhouse => Self::Clickhouse,
+            Storage::Postgres => Self::Postgres,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Config {

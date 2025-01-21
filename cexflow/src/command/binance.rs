@@ -1,17 +1,19 @@
 use clap::{Subcommand, ValueEnum};
 use snafu::ResultExt;
-use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 
 use crate::{
+    config::Storage,
     error::{self, Error},
     Config,
 };
 
 use griphook_binance::{
-    database::{ClickhouseDB, PostgresDB},
-    Consumer,
+    database::{
+        ClickhouseManager, DatabaseManager, DatabaseMessage, DatabaseType, PostgresManager,
+    },
+    Sink, StreamType,
 };
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -25,21 +27,6 @@ impl AsRef<str> for OffsetReset {
         match self {
             Self::Earliest => "earliest",
             Self::Latest => "latest",
-        }
-    }
-}
-
-#[derive(Debug, Clone, ValueEnum)]
-pub enum Storage {
-    Clickhouse,
-    Postgres,
-}
-
-impl AsRef<str> for Storage {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Clickhouse => "clickhouse",
-            Self::Postgres => "postgres",
         }
     }
 }
@@ -69,9 +56,6 @@ pub enum Commands {
 
     #[command(about = "Push messages from a specific Kafka topic to storage")]
     Sink {
-        #[arg(help = "The Kafka topic to sink")]
-        topic: String,
-
         #[clap(
             long = "offset",
             short = 'o',
@@ -80,30 +64,12 @@ pub enum Commands {
             value_enum
         )]
         offset_reset: OffsetReset,
-
-        #[clap(
-            long = "storage",
-            short = 's',
-            help = "The storage to sink to",
-            default_value = "clickhouse",
-            value_enum
-        )]
-        storage: Storage,
-
-        #[clap(long = "client-id", short = 'c', help = "The Kafka client id to use")]
-        client_id: Option<String>,
-
-        #[clap(long = "batch-size", short = 'b', help = "The batch size to use")]
-        batch_size: Option<usize>,
-
-        #[clap(long = "batch-timeout", short = 't', help = "The batch timeout to use")]
-        batch_timeout: Option<u64>,
     },
 }
 
 impl Commands {
     #[allow(clippy::too_many_lines)]
-    pub async fn run(self, config: &Config) -> Result<(), Error> {
+    pub async fn run(self, config: Config) -> Result<(), Error> {
         match self {
             Self::TradeStream => {
                 let producer = config.kafka.create_producer()?;
@@ -242,387 +208,127 @@ impl Commands {
                 .await
                 .context(error::ShutdownTokioRuntimeSnafu)
             }
-            Self::Sink { topic, offset_reset, storage, client_id, batch_size, batch_timeout } => {
-                let consumer = config.kafka.create_consumer(offset_reset.as_ref(), client_id)?;
-                let batch_size = batch_size.unwrap_or(config.kafka.batch_size);
-                let batch_timeout =
-                    Duration::from_secs(batch_timeout.unwrap_or(config.kafka.batch_timeout));
-                let stream_type = StreamType::try_from(&topic)?;
-                let table_name = topic.replace('.', "_");
-                let clickhouse_client = config.clickhouse.create_client();
-                let clickhouse_db = Arc::new(ClickhouseDB::new(clickhouse_client));
-                let postgres_client = config.postgres.create_pool().await?;
-                let postgres_db = Arc::new(PostgresDB::new(postgres_client));
+            Self::Sink { offset_reset } => Toplevel::new(move |s| async move {
+                let result: Result<(), Error> = async {
+                    let sinkers = config.binance.sinkers;
 
-                Toplevel::new(move |s| async move {
-                    let _unused = match (storage, stream_type) {
-                        (Storage::Clickhouse, StreamType::Trade) => s.start(SubsystemBuilder::new(
-                            "binance-clickhouse-trade-sink",
-                            move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::Trade,
-                                    griphook_binance::TradeRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
+                    // TODO: Split sinkers for order of shutdown
+                    // let clickhouse_sinkers = sinkers
+                    //     .clone()
+                    //     .into_iter()
+                    //     .filter(|sinker| matches!(sinker.storage, Storage::Clickhouse))
+                    //     .collect::<Vec<_>>();
+
+                    // let postgres_sinkers = sinkers
+                    //     .into_iter()
+                    //     .filter(|sinker| matches!(sinker.storage, Storage::Postgres))
+                    //     .collect::<Vec<_>>();
+
+                    let clickhouse_sender = if sinkers
+                        .iter()
+                        .any(|sinker| matches!(sinker.storage, Storage::Clickhouse))
+                    {
+                        let (tx, rx) = tokio::sync::mpsc::channel::<DatabaseMessage>(10);
+                        let clickhouse_client = config.clickhouse.create_client();
+                        let _unused = s.start(SubsystemBuilder::new(
+                            "binance-clickhouse",
+                            move |h| async move {
+                                ClickhouseManager::new_client(clickhouse_client).run(rx, h).await
                             },
-                        )),
-                        (Storage::Postgres, StreamType::Trade) => s.start(SubsystemBuilder::new(
-                            "binance-postgres-trade-sink",
-                            move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::Trade,
-                                    griphook_binance::TradeRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            },
-                        )),
-                        (Storage::Clickhouse, StreamType::AggTrade) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-aggtrade-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::AggTrade,
-                                    griphook_binance::AggTradeRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::AggTrade) => s.start(
-                            SubsystemBuilder::new("binance-postgres-aggtrade-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::AggTrade,
-                                    griphook_binance::AggTradeRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::BookTicker) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-bookticker-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::BookTicker,
-                                    griphook_binance::BookTickerRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::BookTicker) => s.start(
-                            SubsystemBuilder::new("binance-postgres-bookticker-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::BookTicker,
-                                    griphook_binance::BookTickerRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::Kline) => s.start(SubsystemBuilder::new(
-                            "binance-clickhouse-kline-sink",
-                            move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::Kline,
-                                    griphook_binance::KlineRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            },
-                        )),
-                        (Storage::Postgres, StreamType::Kline) => s.start(SubsystemBuilder::new(
-                            "binance-postgres-kline-sink",
-                            move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::Kline,
-                                    griphook_binance::KlineRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            },
-                        )),
-                        (Storage::Clickhouse, StreamType::MiniTicker) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-miniticker-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::MiniTicker,
-                                    griphook_binance::MiniTickerRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::MiniTicker) => s.start(
-                            SubsystemBuilder::new("binance-postgres-miniticker-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::MiniTicker,
-                                    griphook_binance::MiniTickerRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::Ticker) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-ticker-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::Ticker,
-                                    griphook_binance::TickerRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::Ticker) => s.start(SubsystemBuilder::new(
-                            "binance-postgres-ticker-sink",
-                            move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::Ticker,
-                                    griphook_binance::TickerRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            },
-                        )),
-                        (Storage::Clickhouse, StreamType::BookDepth) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-bookdepth-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::BookDepth,
-                                    griphook_binance::BookDepthNestedRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::BookDepth) => s.start(
-                            SubsystemBuilder::new("binance-postgres-bookdepth-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::BookDepth,
-                                    griphook_binance::BookDepthRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::PartialBookDepth) => {
-                            s.start(SubsystemBuilder::new(
-                                "binance-clickhouse-partialbookdepth-sink",
-                                move |h| {
-                                    let consumer: Consumer<
-                                        ClickhouseDB,
-                                        griphook_binance::PartialBookDepth,
-                                        griphook_binance::PartialBookDepthNestedRow,
-                                    > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                    consumer.run(topic, batch_size, batch_timeout, h)
-                                },
-                            ))
-                        }
-                        (Storage::Postgres, StreamType::PartialBookDepth) => {
-                            s.start(SubsystemBuilder::new(
-                                "binance-postgres-partialbookdepth-sink",
-                                move |h| {
-                                    let consumer: Consumer<
-                                        PostgresDB,
-                                        griphook_binance::PartialBookDepth,
-                                        griphook_binance::PartialBookDepthRow,
-                                    > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                    consumer.run(topic, batch_size, batch_timeout, h)
-                                },
-                            ))
-                        }
-                        (Storage::Clickhouse, StreamType::WindowTicker) => {
-                            s.start(SubsystemBuilder::new(
-                                "binance-clickhouse-windowticker-sink",
-                                move |h| {
-                                    let consumer: Consumer<
-                                        ClickhouseDB,
-                                        griphook_binance::WindowTicker,
-                                        griphook_binance::WindowTickerRow,
-                                    > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                    consumer.run(topic, batch_size, batch_timeout, h)
-                                },
-                            ))
-                        }
-                        (Storage::Postgres, StreamType::WindowTicker) => s.start(
-                            SubsystemBuilder::new("binance-postgres-windowticker-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::WindowTicker,
-                                    griphook_binance::WindowTickerRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::ForceOrder) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-forceorder-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::ForceOrder,
-                                    griphook_binance::ForceOrderRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::ForceOrder) => s.start(
-                            SubsystemBuilder::new("binance-postgres-forceorder-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::ForceOrder,
-                                    griphook_binance::ForceOrderRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::MarkPrice) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-markprice-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::MarkPrice,
-                                    griphook_binance::MarkPriceRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::MarkPrice) => s.start(
-                            SubsystemBuilder::new("binance-postgres-markprice-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::MarkPrice,
-                                    griphook_binance::MarkPriceRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Clickhouse, StreamType::ContinuousKline) => {
-                            s.start(SubsystemBuilder::new(
-                                "binance-clickhouse-continuouskline-sink",
-                                move |h| {
-                                    let consumer: Consumer<
-                                        ClickhouseDB,
-                                        griphook_binance::ContinuousKline,
-                                        griphook_binance::ContinuousKlineRow,
-                                    > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                    consumer.run(topic, batch_size, batch_timeout, h)
-                                },
-                            ))
-                        }
-                        (Storage::Postgres, StreamType::ContinuousKline) => {
-                            s.start(SubsystemBuilder::new(
-                                "binance-postgres-continuouskline-sink",
-                                move |h| {
-                                    let consumer: Consumer<
-                                        PostgresDB,
-                                        griphook_binance::ContinuousKline,
-                                        griphook_binance::ContinuousKlineRow,
-                                    > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                    consumer.run(topic, batch_size, batch_timeout, h)
-                                },
-                            ))
-                        }
-                        (Storage::Clickhouse, StreamType::AvgPrice) => s.start(
-                            SubsystemBuilder::new("binance-clickhouse-avgprice-sink", move |h| {
-                                let consumer: Consumer<
-                                    ClickhouseDB,
-                                    griphook_binance::AvgPrice,
-                                    griphook_binance::AvgPriceRow,
-                                > = Consumer::new(clickhouse_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
-                        (Storage::Postgres, StreamType::AvgPrice) => s.start(
-                            SubsystemBuilder::new("binance-postgres-avgprice-sink", move |h| {
-                                let consumer: Consumer<
-                                    PostgresDB,
-                                    griphook_binance::AvgPrice,
-                                    griphook_binance::AvgPriceRow,
-                                > = Consumer::new(postgres_db.clone(), consumer, table_name);
-                                consumer.run(topic, batch_size, batch_timeout, h)
-                            }),
-                        ),
+                        ));
+                        Some(tx)
+                    } else {
+                        None
                     };
-                })
-                .catch_signals()
-                .handle_shutdown_requests(Duration::from_secs(5))
-                .await
-                .context(error::ShutdownTokioRuntimeSnafu)
-            }
-        }
-    }
-}
 
-fn extract_stream_type(input: &str) -> Result<String, Error> {
-    let parts: Vec<&str> = input.split('.').collect();
+                    let postgres_sender =
+                        if sinkers.iter().any(|sinker| matches!(sinker.storage, Storage::Postgres))
+                        {
+                            let postgres_client =
+                                config.postgres.create_pool().await.context(error::ConfigSnafu)?;
+                            let (tx, rx) = tokio::sync::mpsc::channel::<DatabaseMessage>(10);
+                            let _unused = s.start(SubsystemBuilder::new(
+                                "binance-postgres",
+                                move |h| async move {
+                                    PostgresManager::new_pool(postgres_client)
+                                        .run(rx, h)
+                                        .await
+                                        .context(error::BinanceSnafu)
+                                },
+                            ));
+                            Some(tx)
+                        } else {
+                            None
+                        };
 
-    if parts.len() > 3 {
-        let stream_type = parts[3].to_lowercase();
-        if stream_type.contains("ticker_") {
-            return Ok("windowticker".to_string());
-        } else if stream_type.contains("depth") && stream_type.len() > 5 {
-            return Ok("partialbookdepth".to_string());
-        } else if stream_type.contains("continuouskline_") {
-            return Ok("continuouskline".to_string());
-        } else if stream_type.contains("kline") {
-            return Ok("kline".to_string());
-        }
-        Ok(stream_type)
-    } else {
-        Err(Error::InvalidStreamTopic { topic: input.to_string() })
-    }
-}
+                    for sinker in sinkers {
+                        let table_name = sinker.topic.replace('.', "_");
+                        match sinker.storage {
+                            Storage::Clickhouse => {
+                                let consumer = config.kafka.create_consumer(
+                                    offset_reset.as_ref(),
+                                    Some("clickhouse".to_string()),
+                                )?;
+                                if let Some(tx) = clickhouse_sender.clone() {
+                                    let sink = Sink::new(tx, consumer, table_name);
+                                    let _unused = s.start(SubsystemBuilder::new(
+                                        format!("binance-{}-sinker", sinker.topic),
+                                        move |h| {
+                                            sink.run(
+                                                sinker.topic,
+                                                DatabaseType::from(sinker.storage),
+                                                sinker.batch_size,
+                                                Duration::from_secs(sinker.batch_timeout),
+                                                h,
+                                            )
+                                        },
+                                    ));
+                                } else {
+                                    return Err(Error::StorageNotInitialized {
+                                        storage: "clickhouse".to_string(),
+                                    });
+                                }
+                            }
+                            Storage::Postgres => {
+                                let consumer = config.kafka.create_consumer(
+                                    offset_reset.as_ref(),
+                                    Some("postgres".to_string()),
+                                )?;
+                                if let Some(tx) = postgres_sender.clone() {
+                                    let sink = Sink::new(tx, consumer, table_name);
+                                    let _unused = s.start(SubsystemBuilder::new(
+                                        format!("binance-{}-sinker", sinker.topic),
+                                        move |h| {
+                                            sink.run(
+                                                sinker.topic,
+                                                DatabaseType::from(sinker.storage),
+                                                sinker.batch_size,
+                                                Duration::from_secs(sinker.batch_timeout),
+                                                h,
+                                            )
+                                        },
+                                    ));
+                                } else {
+                                    return Err(Error::StorageNotInitialized {
+                                        storage: "postgres".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
 
-#[derive(Debug)]
-enum StreamType {
-    AggTrade,
-    AvgPrice,
-    BookDepth,
-    BookTicker,
-    ContinuousKline,
-    Kline,
-    ForceOrder,
-    MarkPrice,
-    MiniTicker,
-    PartialBookDepth,
-    Ticker,
-    Trade,
-    WindowTicker,
-}
+                    Ok(())
+                }
+                .await;
 
-impl std::fmt::Display for StreamType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AggTrade => write!(f, "aggtrade"),
-            Self::AvgPrice => write!(f, "avgprice"),
-            Self::BookDepth => write!(f, "depth"),
-            Self::BookTicker => write!(f, "bookticker"),
-            Self::ContinuousKline => write!(f, "continuouskline"),
-            Self::Kline => write!(f, "kline"),
-            Self::ForceOrder => write!(f, "forceorder"),
-            Self::MarkPrice => write!(f, "markprice"),
-            Self::MiniTicker => write!(f, "miniticker"),
-            Self::PartialBookDepth => write!(f, "partialbookdepth"),
-            Self::Ticker => write!(f, "ticker"),
-            Self::Trade => write!(f, "trade"),
-            Self::WindowTicker => write!(f, "windowticker"),
-        }
-    }
-}
-
-impl TryFrom<&String> for StreamType {
-    type Error = Error;
-
-    fn try_from(value: &String) -> Result<Self, Self::Error> {
-        match extract_stream_type(value)?.as_str() {
-            "aggtrade" => Ok(Self::AggTrade),
-            "trade" => Ok(Self::Trade),
-            "avgprice" => Ok(Self::AvgPrice),
-            "depth" => Ok(Self::BookDepth),
-            "bookticker" => Ok(Self::BookTicker),
-            "kline" => Ok(Self::Kline),
-            "miniticker" => Ok(Self::MiniTicker),
-            "partialbookdepth" => Ok(Self::PartialBookDepth),
-            "ticker" => Ok(Self::Ticker),
-            "windowticker" => Ok(Self::WindowTicker),
-            "forceorder" => Ok(Self::ForceOrder),
-            "markprice" => Ok(Self::MarkPrice),
-            "continuouskline" => Ok(Self::ContinuousKline),
-            _ => Err(Error::InvalidStreamTopic { topic: value.to_string() }),
+                if let Err(e) = result {
+                    tracing::error!("Error in Toplevel::new: {}", e);
+                }
+            })
+            .catch_signals()
+            .handle_shutdown_requests(Duration::from_secs(5))
+            .await
+            .context(error::ShutdownTokioRuntimeSnafu),
         }
     }
 }

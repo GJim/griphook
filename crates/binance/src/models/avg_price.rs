@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -67,6 +68,72 @@ impl TryFrom<AvgPrice> for AvgPriceRow {
 
 impl ClickhouseRow for AvgPriceRow {
     type Row = Self;
+}
+
+impl Storage<clickhouse::Client> for AvgPriceRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                interval String,
+                average_price Float64,
+                last_trade_time Int64
+            ) ENGINE = MergeTree()
+            ORDER BY (interval, last_trade_time)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for AvgPriceRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                interval VARCHAR(30) NOT NULL,
+                average_price DOUBLE PRECISION NOT NULL,
+                last_trade_time BIGINT NOT NULL,
+                PRIMARY KEY (interval, last_trade_time)
+            )
+            "#,
+        );
+        let _unused = sqlx::query(&query).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        let mut query_builder = QueryBuilder::<Postgres>::new(format!(
+            "INSERT INTO {table_name} (interval, average_price, last_trade_time) "
+        ));
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.interval)
+                    .push_bind(row.average_price)
+                    .push_bind(row.last_trade_time);
+            })
+            .push(" ON CONFLICT (interval, last_trade_time) DO NOTHING")
+            .build()
+            .execute(client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
 }
 
 impl Database<AvgPrice, AvgPriceRow> for ClickhouseDB {
@@ -138,7 +205,7 @@ impl Database<AvgPrice, AvgPriceRow> for PostgresDB {
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<AvgPriceRow>) -> Result<()> {
-        let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+        let mut query_builder = QueryBuilder::<Postgres>::new(format!(
             "INSERT INTO {table_name} (interval, average_price, last_trade_time) "
         ));
 

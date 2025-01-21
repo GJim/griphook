@@ -84,7 +84,7 @@ impl Cli {
                 config.log.registry();
                 Runtime::new()
                     .context(error::InitializeTokioRuntimeSnafu)?
-                    .block_on(async move { commands.clone().run(&config).await })?;
+                    .block_on(async move { commands.clone().run(config).await })?;
             }
             None => {
                 Self::command().print_help().expect("Failed to write to stdout");

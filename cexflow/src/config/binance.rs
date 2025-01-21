@@ -1,7 +1,15 @@
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 
-use crate::ConfigError;
+use crate::{config::Storage, ConfigError};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Sinker {
+    pub topic: String,
+    pub storage: Storage,
+    pub batch_size: usize,
+    pub batch_timeout: u64,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BinanceConfig {
@@ -10,11 +18,18 @@ pub struct BinanceConfig {
 
     #[serde(default = "BinanceConfig::spot_subscription")]
     pub subscription: Vec<String>,
+
+    #[serde(default = "BinanceConfig::spot_sinker")]
+    pub sinkers: Vec<Sinker>,
 }
 
 impl Default for BinanceConfig {
     fn default() -> Self {
-        Self { trading_type: Self::default_trading_type(), subscription: Self::spot_subscription() }
+        Self {
+            trading_type: Self::default_trading_type(),
+            subscription: Self::spot_subscription(),
+            sinkers: Self::spot_sinker(),
+        }
     }
 }
 
@@ -36,6 +51,23 @@ impl BinanceConfig {
             "btcusdt@depth5@1000ms".to_string(), // level: 5 / 10 / 20, interval: 100ms / 1000ms
             "btcusdt@ticker".to_string(),
             "btcusdt@ticker_1h".to_string(), // window_size: 1h / 4h / 1d
+        ]
+    }
+
+    fn spot_sinker() -> Vec<Sinker> {
+        vec![
+            Sinker {
+                topic: "binance.spot.btcusdt.aggtrade".to_string(),
+                storage: Storage::Clickhouse,
+                batch_size: 300,
+                batch_timeout: 3,
+            },
+            Sinker {
+                topic: "binance.spot.btcusdt.kline_1m".to_string(),
+                storage: Storage::Postgres,
+                batch_size: 300,
+                batch_timeout: 3,
+            },
         ]
     }
 

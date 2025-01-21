@@ -89,16 +89,11 @@ ORDER BY
 
 ```sql
 SELECT
-    database,
-    table,
-    SUM(rows) AS row_count
+    schemaname,
+    relname AS table_name,
+    n_live_tup AS row_count
 FROM
-    system.parts
-WHERE
-    active = 1
-    AND database = 'griphook'
-GROUP BY
-    database, table
+    pg_stat_user_tables
 ORDER BY
     row_count DESC;
 ```

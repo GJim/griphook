@@ -7,7 +7,7 @@ mod error;
 mod models;
 pub mod producer;
 
-pub use consumer::{inspector, sink::Consumer};
+pub use consumer::{inspector, sink::Sink};
 pub use error::Error;
 use error::{AvroSerializationSnafu, Result};
 pub use models::{
@@ -99,5 +99,85 @@ impl Event {
             Self::MarkPrice(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
             Self::ContinuousKline(e) => e.serialize_to_avro().context(AvroSerializationSnafu),
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum StreamType {
+    AggTrade,
+    AvgPrice,
+    BookDepth,
+    BookTicker,
+    ContinuousKline,
+    Kline,
+    ForceOrder,
+    MarkPrice,
+    MiniTicker,
+    PartialBookDepth,
+    Ticker,
+    Trade,
+    WindowTicker,
+}
+
+impl std::fmt::Display for StreamType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AggTrade => write!(f, "aggtrade"),
+            Self::AvgPrice => write!(f, "avgprice"),
+            Self::BookDepth => write!(f, "depth"),
+            Self::BookTicker => write!(f, "bookticker"),
+            Self::ContinuousKline => write!(f, "continuouskline"),
+            Self::Kline => write!(f, "kline"),
+            Self::ForceOrder => write!(f, "forceorder"),
+            Self::MarkPrice => write!(f, "markprice"),
+            Self::MiniTicker => write!(f, "miniticker"),
+            Self::PartialBookDepth => write!(f, "partialbookdepth"),
+            Self::Ticker => write!(f, "ticker"),
+            Self::Trade => write!(f, "trade"),
+            Self::WindowTicker => write!(f, "windowticker"),
+        }
+    }
+}
+
+impl TryFrom<&String> for StreamType {
+    type Error = Error;
+
+    fn try_from(value: &String) -> Result<Self> {
+        match extract_stream_type_from_topic(value)?.as_str() {
+            "aggtrade" => Ok(Self::AggTrade),
+            "trade" => Ok(Self::Trade),
+            "avgprice" => Ok(Self::AvgPrice),
+            "depth" => Ok(Self::BookDepth),
+            "bookticker" => Ok(Self::BookTicker),
+            "kline" => Ok(Self::Kline),
+            "miniticker" => Ok(Self::MiniTicker),
+            "partialbookdepth" => Ok(Self::PartialBookDepth),
+            "ticker" => Ok(Self::Ticker),
+            "windowticker" => Ok(Self::WindowTicker),
+            "forceorder" => Ok(Self::ForceOrder),
+            "markprice" => Ok(Self::MarkPrice),
+            "continuouskline" => Ok(Self::ContinuousKline),
+            _ => Err(Error::InvalidStreamTopic { topic: value.to_string() }),
+        }
+    }
+}
+
+fn extract_stream_type_from_topic(input: &str) -> Result<String> {
+    let parts: Vec<&str> = input.split('.').collect();
+
+    if parts.len() > 3 {
+        let stream_type = parts[3].to_lowercase();
+        if stream_type.contains("ticker_") {
+            return Ok("windowticker".to_string());
+        } else if stream_type.contains("depth") && stream_type.len() > 5 {
+            return Ok("partialbookdepth".to_string());
+        } else if stream_type.contains("continuouskline_") {
+            return Ok("continuouskline".to_string());
+        } else if stream_type.contains("kline") {
+            return Ok("kline".to_string());
+        }
+        Ok(stream_type)
+    } else {
+        Err(Error::InvalidStreamTopic { topic: input.to_string() })
     }
 }

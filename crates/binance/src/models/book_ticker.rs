@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB},
+    database::{ClickhouseDB, Database, PostgresDB, Storage},
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -8,6 +8,7 @@ use crate::{
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub const RAW_SCHEMA: &str = r#"
 {
@@ -149,7 +150,7 @@ impl Database<BookTicker, BookTickerRow> for PostgresDB {
     }
 
     async fn insert_row_batch(&self, table_name: &str, data: Vec<BookTickerRow>) -> Result<()> {
-        let mut query_builder: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             format!("INSERT INTO {table_name} (update_id, best_bid_price, best_bid_quantity, best_ask_price, best_ask_quantity) "),
         );
 
@@ -165,6 +166,82 @@ impl Database<BookTicker, BookTickerRow> for PostgresDB {
             .push(" ON CONFLICT (update_id) DO NOTHING")
             .build()
             .execute(&self.client)
+            .await
+            .context(error::PostgresSnafu)?;
+
+        Ok(())
+    }
+}
+
+impl Storage<clickhouse::Client> for BookTickerRow {
+    async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                update_id Int64,
+                best_bid_price Float64,
+                best_bid_quantity Float64,
+                best_ask_price Float64,
+                best_ask_quantity Float64
+            ) ENGINE = MergeTree()
+            ORDER BY (update_id)
+            "#,
+        );
+        client.query(&query).execute().await.context(error::ClickhouseSnafu)
+    }
+
+    async fn batch_insert(
+        client: &clickhouse::Client,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        Self::insert_row_batch(client, table_name, data).await
+    }
+}
+
+impl Storage<Pool<Postgres>> for BookTickerRow {
+    async fn ensure_table_exists(client: &Pool<Postgres>, table_name: &str) -> Result<()> {
+        let query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                update_id BIGINT NOT NULL,
+                best_bid_price DOUBLE PRECISION NOT NULL,
+                best_bid_quantity DOUBLE PRECISION NOT NULL,
+                best_ask_price DOUBLE PRECISION NOT NULL,
+                best_ask_quantity DOUBLE PRECISION NOT NULL,
+                PRIMARY KEY (update_id)
+            )
+            "#,
+        );
+        let _unused = sqlx::query(&query).execute(client).await.context(error::PostgresSnafu)?;
+        Ok(())
+    }
+
+    async fn batch_insert(
+        client: &Pool<Postgres>,
+        table_name: &str,
+        data: Vec<Self>,
+    ) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+            format!("INSERT INTO {table_name} (update_id, best_bid_price, best_bid_quantity, best_ask_price, best_ask_quantity) "),
+        );
+
+        let _unused = query_builder
+            .push_values(data, |mut b, row| {
+                let _unused = b
+                    .push_bind(row.update_id)
+                    .push_bind(row.best_bid_price)
+                    .push_bind(row.best_bid_quantity)
+                    .push_bind(row.best_ask_price)
+                    .push_bind(row.best_ask_quantity);
+            })
+            .push(" ON CONFLICT (update_id) DO NOTHING")
+            .build()
+            .execute(client)
             .await
             .context(error::PostgresSnafu)?;
 

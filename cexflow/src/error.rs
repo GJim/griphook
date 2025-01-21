@@ -31,6 +31,9 @@ pub enum Error {
 
     #[snafu(display("Unsupported storage: {storage}"))]
     UnsupportedStorage { storage: String },
+
+    #[snafu(display("{storage} is not initialize successfully"))]
+    StorageNotInitialized { storage: String },
 }
 
 impl From<config::Error> for Error {
@@ -41,7 +44,12 @@ impl From<config::Error> for Error {
 
 impl From<griphook_binance::Error> for Error {
     fn from(source: griphook_binance::Error) -> Self {
-        Self::Binance { source }
+        match source {
+            griphook_binance::Error::InvalidStreamTopic { topic } => {
+                Self::InvalidStreamTopic { topic }
+            }
+            _ => Self::Binance { source },
+        }
     }
 }
 
@@ -61,7 +69,8 @@ impl CommandError for Error {
             Self::Config { .. }
             | Self::InvalidStreamTopic { .. }
             | Self::UnsupportedStreamType { .. }
-            | Self::UnsupportedStorage { .. } => exitcode::CONFIG,
+            | Self::UnsupportedStorage { .. }
+            | Self::StorageNotInitialized { .. } => exitcode::CONFIG,
             Self::Binance { .. } => exitcode::SOFTWARE,
             Self::InitializeTokioRuntime { .. } | Self::ShutdownTokioRuntime { .. } => {
                 exitcode::IOERR
