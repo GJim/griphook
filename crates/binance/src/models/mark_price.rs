@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB, Storage},
+    database::Storage,
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -83,110 +83,6 @@ impl TryFrom<MarkPrice> for MarkPriceRow {
             funding_rate: price.funding_rate.parse().context(error::ParseF64Snafu)?,
             next_funding_time: price.next_funding_time,
         })
-    }
-}
-
-impl Database<MarkPrice, MarkPriceRow> for ClickhouseDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let query = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                event_time Int64,
-                mark_price Float64,
-                index_price Float64,
-                estimated_settle_price Float64,
-                funding_rate Float64,
-                next_funding_time Int64
-            ) ENGINE = MergeTree()
-            ORDER BY (event_time)
-            "#,
-        );
-        self.client.query(&query).execute().await.context(error::ClickhouseSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: MarkPrice) -> Result<MarkPriceRow> {
-        MarkPriceRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: MarkPriceRow) -> Result<()> {
-        MarkPriceRow::insert_row(&self.client, table_name, data).await
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<MarkPriceRow>) -> Result<()> {
-        MarkPriceRow::insert_row_batch(&self.client, table_name, data).await
-    }
-}
-
-impl Database<MarkPrice, MarkPriceRow> for PostgresDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let query = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                event_time BIGINT NOT NULL,
-                mark_price DOUBLE PRECISION NOT NULL,
-                index_price DOUBLE PRECISION NOT NULL,
-                estimated_settle_price DOUBLE PRECISION NOT NULL,
-                funding_rate DOUBLE PRECISION NOT NULL,
-                next_funding_time BIGINT NOT NULL,
-                PRIMARY KEY (event_time)
-            )
-            "#,
-        );
-        let _unused =
-            sqlx::query(&query).execute(&self.client).await.context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: MarkPrice) -> Result<MarkPriceRow> {
-        MarkPriceRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: MarkPriceRow) -> Result<()> {
-        let query = format!(
-            r#"
-            INSERT INTO {table_name} (
-                event_time, mark_price, index_price, estimated_settle_price,
-                funding_rate, next_funding_time
-            ) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (event_time) DO NOTHING
-            "#,
-        );
-        let _unused = sqlx::query(&query)
-            .bind(data.event_time)
-            .bind(data.mark_price)
-            .bind(data.index_price)
-            .bind(data.estimated_settle_price)
-            .bind(data.funding_rate)
-            .bind(data.next_funding_time)
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<MarkPriceRow>) -> Result<()> {
-        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(format!(
-            "INSERT INTO {table_name} (event_time, mark_price, index_price, estimated_settle_price, 
-            funding_rate, next_funding_time) "
-        ));
-
-        let _unused = query_builder
-            .push_values(data, |mut b, row| {
-                let _unused = b
-                    .push_bind(row.event_time)
-                    .push_bind(row.mark_price)
-                    .push_bind(row.index_price)
-                    .push_bind(row.estimated_settle_price)
-                    .push_bind(row.funding_rate)
-                    .push_bind(row.next_funding_time);
-            })
-            .push(" ON CONFLICT (event_time) DO NOTHING")
-            .build()
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-
-        Ok(())
     }
 }
 

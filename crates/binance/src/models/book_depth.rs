@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB, Storage},
+    database::Storage,
     models::{
         error::{self, Result},
         Avro, ClickhouseRow, Order, OrderRow,
@@ -163,48 +163,6 @@ impl ClickhouseRow for BookDepthNestedRow {
     type Row = Self;
 }
 
-impl Database<BookDepth, BookDepthNestedRow> for ClickhouseDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let create_table = format!(
-            r#"
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    event_time Int64,
-                    first_update_id Int64,
-                    final_update_id Int64,
-                    bids Nested (
-                        price Float64,
-                        quantity Float64
-                    ),
-                    asks Nested (
-                        price Float64,
-                        quantity Float64
-                    )
-                )
-                ENGINE = MergeTree()
-                ORDER BY (event_time)
-                "#
-        );
-        self.client.query(&create_table).execute().await.context(error::ClickhouseSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: BookDepth) -> Result<BookDepthNestedRow> {
-        BookDepthNestedRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: BookDepthNestedRow) -> Result<()> {
-        BookDepthNestedRow::insert_row(&self.client, table_name, data).await
-    }
-
-    async fn insert_row_batch(
-        &self,
-        table_name: &str,
-        data: Vec<BookDepthNestedRow>,
-    ) -> Result<()> {
-        BookDepthNestedRow::insert_row_batch(&self.client, table_name, data).await
-    }
-}
-
 impl Storage<clickhouse::Client> for BookDepthNestedRow {
     async fn ensure_table_exists(client: &clickhouse::Client, table_name: &str) -> Result<()> {
         let query = format!(
@@ -230,89 +188,6 @@ impl Storage<clickhouse::Client> for BookDepthNestedRow {
         data: Vec<Self>,
     ) -> Result<()> {
         Self::insert_row_batch(client, table_name, data).await
-    }
-}
-
-impl Database<BookDepth, BookDepthRow> for PostgresDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let create_table = format!(
-            r#"
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    event_time BIGINT,
-                    first_update_id BIGINT,
-                    final_update_id BIGINT,
-                    bids JSONB,
-                    asks JSONB,
-                    PRIMARY KEY (event_time)
-                )
-                "#
-        );
-        let _unused =
-            sqlx::query(&create_table).execute(&self.client).await.context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: BookDepth) -> Result<BookDepthRow> {
-        BookDepthRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: BookDepthRow) -> Result<()> {
-        let _unused = sqlx::query(&format!(
-            r#"
-                INSERT INTO {table_name} (
-                    event_time, first_update_id, final_update_id,
-                    bids, asks
-                )
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (event_time) DO NOTHING
-            "#
-        ))
-        .bind(data.event_time)
-        .bind(data.first_update_id)
-        .bind(data.final_update_id)
-        .bind(&serde_json::to_value(&data.bids).context(error::ParseJsonSnafu)?)
-        .bind(&serde_json::to_value(&data.asks).context(error::ParseJsonSnafu)?)
-        .execute(&self.client)
-        .await
-        .context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<BookDepthRow>) -> Result<()> {
-        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(format!(
-            "INSERT INTO {table_name} (event_time, first_update_id, final_update_id, bids, asks) "
-        ));
-
-        // Pre-serialize the JSON values to handle potential errors
-        let processed_data: Result<Vec<_>> = data
-            .into_iter()
-            .map(|row| {
-                let bids_json = serde_json::to_value(&row.bids).context(error::ParseJsonSnafu)?;
-                let asks_json = serde_json::to_value(&row.asks).context(error::ParseJsonSnafu)?;
-                Ok((row.event_time, row.first_update_id, row.final_update_id, bids_json, asks_json))
-            })
-            .collect();
-        let processed_data = processed_data?;
-
-        let _unused = query_builder
-            .push_values(
-                processed_data,
-                |mut b, (event_time, first_update_id, final_update_id, bids, asks)| {
-                    let _unused = b
-                        .push_bind(event_time)
-                        .push_bind(first_update_id)
-                        .push_bind(final_update_id)
-                        .push_bind(bids)
-                        .push_bind(asks);
-                },
-            )
-            .push(" ON CONFLICT (event_time) DO NOTHING")
-            .build()
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-
-        Ok(())
     }
 }
 

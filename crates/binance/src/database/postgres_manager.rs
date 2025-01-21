@@ -1,30 +1,28 @@
 use crate::{
-    database::{ClickhouseRows, DatabaseManager, DatabaseMessage},
+    database::{DatabaseManager, DatabaseMessage, PostgresRows},
     error::Result,
-    AggTradeRow, AvgPriceRow, BookDepthNestedRow, BookTickerRow, ContinuousKlineRow, ForceOrderRow,
-    KlineRow, MarkPriceRow, MiniTickerRow, PartialBookDepthNestedRow, TickerRow, TradeRow,
+    AggTradeRow, AvgPriceRow, BookDepthRow, BookTickerRow, ContinuousKlineRow, ForceOrderRow,
+    KlineRow, MarkPriceRow, MiniTickerRow, PartialBookDepthRow, TickerRow, TradeRow,
     WindowTickerRow,
 };
-// use snafu::ResultExt;
 use std::collections::HashSet;
 use tokio::sync::{mpsc, RwLock};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-pub struct ClickhouseManager {
-    pub db: clickhouse::Client,
-    pub table_cache: RwLock<HashSet<String>>,
+pub struct PostgresManager {
+    db: sqlx::Pool<sqlx::Postgres>,
+    table_cache: RwLock<HashSet<String>>,
 }
 
-impl ClickhouseManager {
-    #[allow(dead_code)]
+impl PostgresManager {
     #[must_use]
-    pub fn new_client(db: clickhouse::Client) -> Self {
+    pub fn new_pool(db: sqlx::Pool<sqlx::Postgres>) -> Self {
         Self::new(db)
     }
 }
 
-impl DatabaseManager for ClickhouseManager {
-    type DB = clickhouse::Client;
+impl DatabaseManager for PostgresManager {
+    type DB = sqlx::Pool<sqlx::Postgres>;
     type Message = DatabaseMessage;
 
     fn new(db: Self::DB) -> Self {
@@ -39,7 +37,7 @@ impl DatabaseManager for ClickhouseManager {
         &self.table_cache
     }
 
-    /// Run loop specialized for handling Clickhouse messages.
+    /// Run loop specialized for handling Postgres messages.
     #[allow(clippy::too_many_lines)]
     async fn run(
         &self,
@@ -51,68 +49,67 @@ impl DatabaseManager for ClickhouseManager {
                 msg_opt = rx.recv() => {
                     if let Some(msg) = msg_opt {
                         match msg {
-                            DatabaseMessage::Clickhouse(msg) => {
+                            // We ignore or warn about Clickhouse messages here:
+                            DatabaseMessage::Clickhouse(_) => {
+                                tracing::warn!(
+                                    "Postgres database manager does not support Clickhouse messages"
+                                );
+                            }
+                            DatabaseMessage::Postgres(msg) => {
                                 match msg.rows {
-                                    ClickhouseRows::AggTrade(rows) => {
+                                    PostgresRows::AggTrade(rows) => {
                                         self.ensure_table_exists::<AggTradeRow>(&msg.table_name).await?;
                                         self.batch_insert::<AggTradeRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::AvgPrice(rows) => {
+                                    PostgresRows::AvgPrice(rows) => {
                                         self.ensure_table_exists::<AvgPriceRow>(&msg.table_name).await?;
                                         self.batch_insert::<AvgPriceRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::BookDepth(rows) => {
-                                        self.ensure_table_exists::<BookDepthNestedRow>(&msg.table_name).await?;
-                                        self.batch_insert::<BookDepthNestedRow>(&msg.table_name, rows).await?;
+                                    PostgresRows::BookDepth(rows) => {
+                                        self.ensure_table_exists::<BookDepthRow>(&msg.table_name).await?;
+                                        self.batch_insert::<BookDepthRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::BookTicker(rows) => {
+                                    PostgresRows::BookTicker(rows) => {
                                         self.ensure_table_exists::<BookTickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<BookTickerRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::ContinuousKline(rows) => {
+                                    PostgresRows::ContinuousKline(rows) => {
                                         self.ensure_table_exists::<ContinuousKlineRow>(&msg.table_name).await?;
                                         self.batch_insert::<ContinuousKlineRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::ForceOrder(rows) => {
+                                    PostgresRows::ForceOrder(rows) => {
                                         self.ensure_table_exists::<ForceOrderRow>(&msg.table_name).await?;
                                         self.batch_insert::<ForceOrderRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::Kline(rows) => {
+                                    PostgresRows::Kline(rows) => {
                                         self.ensure_table_exists::<KlineRow>(&msg.table_name).await?;
                                         self.batch_insert::<KlineRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::MarkPrice(rows) => {
+                                    PostgresRows::MarkPrice(rows) => {
                                         self.ensure_table_exists::<MarkPriceRow>(&msg.table_name).await?;
                                         self.batch_insert::<MarkPriceRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::MiniTicker(rows) => {
+                                    PostgresRows::MiniTicker(rows) => {
                                         self.ensure_table_exists::<MiniTickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<MiniTickerRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::PartialBookDepth(rows) => {
-                                        self.ensure_table_exists::<PartialBookDepthNestedRow>(&msg.table_name)
-                                            .await?;
-                                        self.batch_insert::<PartialBookDepthNestedRow>(&msg.table_name, rows)
-                                            .await?;
+                                    PostgresRows::PartialBookDepth(rows) => {
+                                        self.ensure_table_exists::<PartialBookDepthRow>(&msg.table_name).await?;
+                                        self.batch_insert::<PartialBookDepthRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::Ticker(rows) => {
+                                    PostgresRows::Ticker(rows) => {
                                         self.ensure_table_exists::<TickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<TickerRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::Trade(rows) => {
+                                    PostgresRows::Trade(rows) => {
                                         self.ensure_table_exists::<TradeRow>(&msg.table_name).await?;
                                         self.batch_insert::<TradeRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::WindowTicker(rows) => {
+                                    PostgresRows::WindowTicker(rows) => {
                                         self.ensure_table_exists::<WindowTickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<WindowTickerRow>(&msg.table_name, rows).await?;
                                     }
                                 }
-                            }
-                            DatabaseMessage::Postgres(_) => {
-                                tracing::warn!(
-                                    "Clickhouse database manager does not support Postgres messages"
-                                );
                             }
                         }
                     } else {
@@ -136,62 +133,60 @@ impl DatabaseManager for ClickhouseManager {
                     // Process collected messages
                     for msg in pending_msgs {
                         match msg {
-                            DatabaseMessage::Postgres(_) => {
-                                tracing::warn!("Skipping Postgres message during shutdown");
+                            DatabaseMessage::Clickhouse(_) => {
+                                tracing::warn!("Skipping Clickhouse message during shutdown");
                             }
-                            DatabaseMessage::Clickhouse(msg) => {
+                            DatabaseMessage::Postgres(msg) => {
                                 match msg.rows {
-                                    ClickhouseRows::AggTrade(rows) => {
+                                    PostgresRows::AggTrade(rows) => {
                                         self.ensure_table_exists::<AggTradeRow>(&msg.table_name).await?;
                                         self.batch_insert::<AggTradeRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::AvgPrice(rows) => {
+                                    PostgresRows::AvgPrice(rows) => {
                                         self.ensure_table_exists::<AvgPriceRow>(&msg.table_name).await?;
                                         self.batch_insert::<AvgPriceRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::BookDepth(rows) => {
-                                        self.ensure_table_exists::<BookDepthNestedRow>(&msg.table_name).await?;
-                                        self.batch_insert::<BookDepthNestedRow>(&msg.table_name, rows).await?;
+                                    PostgresRows::BookDepth(rows) => {
+                                        self.ensure_table_exists::<BookDepthRow>(&msg.table_name).await?;
+                                        self.batch_insert::<BookDepthRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::BookTicker(rows) => {
+                                    PostgresRows::BookTicker(rows) => {
                                         self.ensure_table_exists::<BookTickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<BookTickerRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::ContinuousKline(rows) => {
+                                    PostgresRows::ContinuousKline(rows) => {
                                         self.ensure_table_exists::<ContinuousKlineRow>(&msg.table_name).await?;
                                         self.batch_insert::<ContinuousKlineRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::ForceOrder(rows) => {
+                                    PostgresRows::ForceOrder(rows) => {
                                         self.ensure_table_exists::<ForceOrderRow>(&msg.table_name).await?;
                                         self.batch_insert::<ForceOrderRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::Kline(rows) => {
+                                    PostgresRows::Kline(rows) => {
                                         self.ensure_table_exists::<KlineRow>(&msg.table_name).await?;
                                         self.batch_insert::<KlineRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::MarkPrice(rows) => {
+                                    PostgresRows::MarkPrice(rows) => {
                                         self.ensure_table_exists::<MarkPriceRow>(&msg.table_name).await?;
                                         self.batch_insert::<MarkPriceRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::MiniTicker(rows) => {
+                                    PostgresRows::MiniTicker(rows) => {
                                         self.ensure_table_exists::<MiniTickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<MiniTickerRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::PartialBookDepth(rows) => {
-                                        self.ensure_table_exists::<PartialBookDepthNestedRow>(&msg.table_name)
-                                            .await?;
-                                        self.batch_insert::<PartialBookDepthNestedRow>(&msg.table_name, rows)
-                                            .await?;
+                                    PostgresRows::PartialBookDepth(rows) => {
+                                        self.ensure_table_exists::<PartialBookDepthRow>(&msg.table_name).await?;
+                                        self.batch_insert::<PartialBookDepthRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::Ticker(rows) => {
+                                    PostgresRows::Ticker(rows) => {
                                         self.ensure_table_exists::<TickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<TickerRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::Trade(rows) => {
+                                    PostgresRows::Trade(rows) => {
                                         self.ensure_table_exists::<TradeRow>(&msg.table_name).await?;
                                         self.batch_insert::<TradeRow>(&msg.table_name, rows).await?;
                                     }
-                                    ClickhouseRows::WindowTicker(rows) => {
+                                    PostgresRows::WindowTicker(rows) => {
                                         self.ensure_table_exists::<WindowTickerRow>(&msg.table_name).await?;
                                         self.batch_insert::<WindowTickerRow>(&msg.table_name, rows).await?;
                                     }
@@ -200,10 +195,9 @@ impl DatabaseManager for ClickhouseManager {
                         }
                     }
 
-                    // Close the Clickhouse client gracefully
-                    tracing::info!("Closing Clickhouse client...");
-                    // Note: The Clickhouse client doesn't have an explicit close method,
-                    // but we'll drop it naturally when the manager is dropped
+                    // Close the database connection pool gracefully
+                    tracing::info!("Closing database connection pool...");
+                    self.db.close().await;
 
                     tracing::info!("Finished processing remaining messages, shutting down");
                     return Ok(());

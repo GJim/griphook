@@ -64,7 +64,6 @@ pub struct Config {
     pub postgres: postgres::PostgresConfig,
 }
 
-#[allow(dead_code)]
 impl Config {
     pub fn search_config_file_path() -> PathBuf {
         let paths = vec![Self::default_path()]

@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB, Storage},
+    database::Storage,
     models::{
         error::{self, Result},
         Avro, ClickhouseRow, Order, OrderRow,
@@ -134,110 +134,6 @@ impl TryFrom<PartialBookDepth> for PartialBookDepthNestedRow {
             asks_price: ask_prices,
             asks_quantity: ask_quantities,
         })
-    }
-}
-
-impl Database<PartialBookDepth, PartialBookDepthNestedRow> for ClickhouseDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let create_table = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                last_update_id Int64,
-                bids Nested (
-                    price Float64,
-                    quantity Float64
-                ),
-                asks Nested (
-                    price Float64,
-                    quantity Float64
-                )
-            )
-            ENGINE = MergeTree()
-            ORDER BY (last_update_id)
-            "#
-        );
-        self.client.query(&create_table).execute().await.context(error::ClickhouseSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: PartialBookDepth) -> Result<PartialBookDepthNestedRow> {
-        PartialBookDepthNestedRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: PartialBookDepthNestedRow) -> Result<()> {
-        PartialBookDepthNestedRow::insert_row(&self.client, table_name, data).await
-    }
-
-    async fn insert_row_batch(
-        &self,
-        table_name: &str,
-        data: Vec<PartialBookDepthNestedRow>,
-    ) -> Result<()> {
-        PartialBookDepthNestedRow::insert_row_batch(&self.client, table_name, data).await
-    }
-}
-
-impl Database<PartialBookDepth, PartialBookDepthRow> for PostgresDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let create_table = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                last_update_id BIGINT NOT NULL,
-                bids JSONB NOT NULL,
-                asks JSONB NOT NULL,
-                PRIMARY KEY (last_update_id)
-            )
-            "#
-        );
-        let _unused =
-            sqlx::query(&create_table).execute(&self.client).await.context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: PartialBookDepth) -> Result<PartialBookDepthRow> {
-        PartialBookDepthRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: PartialBookDepthRow) -> Result<()> {
-        let query = format!(
-            r#"
-            INSERT INTO {table_name} (last_update_id, bids, asks)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (last_update_id) DO NOTHING
-            "#,
-        );
-        let _unused = sqlx::query(&query)
-            .bind(data.last_update_id)
-            .bind(serde_json::to_value(&data.bids).context(error::ParseJsonSnafu)?)
-            .bind(serde_json::to_value(&data.asks).context(error::ParseJsonSnafu)?)
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn insert_row_batch(
-        &self,
-        table_name: &str,
-        data: Vec<PartialBookDepthRow>,
-    ) -> Result<()> {
-        let mut query_builder: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new(format!("INSERT INTO {table_name} (last_update_id, bids, asks) "));
-
-        let _unused = query_builder
-            .push_values(data, |mut b, row| {
-                let _unused = b
-                    .push_bind(row.last_update_id)
-                    .push_bind(serde_json::to_value(&row.bids).unwrap())
-                    .push_bind(serde_json::to_value(&row.asks).unwrap());
-            })
-            .push(" ON CONFLICT (last_update_id) DO NOTHING")
-            .build()
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-
-        Ok(())
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB, Storage},
+    database::Storage,
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -79,111 +79,6 @@ impl TryFrom<Trade> for TradeRow {
             trade_time: value.trade_time,
             is_buyer_market_maker: value.is_buyer_market_maker,
         })
-    }
-}
-
-impl Database<Trade, TradeRow> for ClickhouseDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let create_table = format!(
-            r#"
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    trade_id Int64,
-                    price Float64,
-                    quantity Float64,
-                    trade_time Int64,
-                    is_buyer_market_maker Bool
-                )
-                ENGINE = MergeTree()
-                ORDER BY (trade_id)
-                "#
-        );
-        self.client.query(&create_table).execute().await.context(error::ClickhouseSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: Trade) -> Result<TradeRow> {
-        TradeRow::try_from(data)
-    }
-
-    /// Inserts a row into the database.
-    async fn insert_row(&self, table_name: &str, data: TradeRow) -> Result<()> {
-        TradeRow::insert_row(&self.client, table_name, data).await
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<TradeRow>) -> Result<()> {
-        TradeRow::insert_row_batch(&self.client, table_name, data).await
-    }
-}
-
-impl Database<Trade, TradeRow> for PostgresDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let create_table = format!(
-            r#"
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    trade_id BIGINT,
-                    price DOUBLE PRECISION,
-                    quantity DOUBLE PRECISION,
-                    trade_time BIGINT,
-                    is_buyer_market_maker BOOLEAN,
-                    PRIMARY KEY (trade_id)
-                )
-                "#
-        );
-        let _unused =
-            sqlx::query(&create_table).execute(&self.client).await.context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: Trade) -> Result<TradeRow> {
-        TradeRow::try_from(data)
-    }
-
-    /// Inserts a row into the database.
-    async fn insert_row(&self, table_name: &str, data: TradeRow) -> Result<()> {
-        let query = format!(
-            r#"
-                INSERT INTO {table_name} 
-                    (trade_id, price, quantity, trade_time, is_buyer_market_maker) 
-                VALUES ($1, $2, $3, $4, $5) 
-                ON CONFLICT (trade_id) 
-                DO NOTHING
-            "#
-        );
-        let _unused = sqlx::query(&query)
-            .bind(data.trade_id)
-            .bind(data.price)
-            .bind(data.quantity)
-            .bind(data.trade_time)
-            .bind(data.is_buyer_market_maker)
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<TradeRow>) -> Result<()> {
-        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
-            format!(
-                "INSERT INTO {table_name} (trade_id, price, quantity, trade_time, is_buyer_market_maker) "
-            ),
-        );
-
-        let _unused = query_builder
-            .push_values(data, |mut b, row| {
-                let _unused = b
-                    .push_bind(row.trade_id)
-                    .push_bind(row.price)
-                    .push_bind(row.quantity)
-                    .push_bind(row.trade_time)
-                    .push_bind(row.is_buyer_market_maker);
-            })
-            .push(" ON CONFLICT (trade_id) DO NOTHING")
-            .build()
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-
-        Ok(())
     }
 }
 

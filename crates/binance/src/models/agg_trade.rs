@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB, Storage},
+    database::Storage,
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -168,114 +168,6 @@ impl Storage<Pool<Postgres>> for AggTradeRow {
             .push(" ON CONFLICT (aggregate_trade_id) DO NOTHING")
             .build()
             .execute(client)
-            .await
-            .context(error::PostgresSnafu)?;
-
-        Ok(())
-    }
-}
-
-impl Database<AggTrade, AggTradeRow> for ClickhouseDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let query = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                aggregate_trade_id Int64,
-                price Float64,
-                quantity Float64,
-                first_trade_id Int64,
-                last_trade_id Int64,
-                trade_time Int64,
-                is_buyer_market_maker Boolean
-            ) ENGINE = MergeTree()
-            ORDER BY (aggregate_trade_id)
-            "#,
-        );
-        self.client.query(&query).execute().await.context(error::ClickhouseSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: AggTrade) -> Result<AggTradeRow> {
-        AggTradeRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: AggTradeRow) -> Result<()> {
-        AggTradeRow::insert_row(&self.client, table_name, data).await
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<AggTradeRow>) -> Result<()> {
-        AggTradeRow::insert_row_batch(&self.client, table_name, data).await
-    }
-}
-
-impl Database<AggTrade, AggTradeRow> for PostgresDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let query = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                aggregate_trade_id BIGINT NOT NULL,
-                price DOUBLE PRECISION NOT NULL,
-                quantity DOUBLE PRECISION NOT NULL,
-                first_trade_id BIGINT NOT NULL,
-                last_trade_id BIGINT NOT NULL,
-                trade_time BIGINT NOT NULL,
-                is_buyer_market_maker BOOLEAN NOT NULL,
-                PRIMARY KEY (aggregate_trade_id)
-            )
-            "#,
-        );
-        let _unused =
-            sqlx::query(&query).execute(&self.client).await.context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: AggTrade) -> Result<AggTradeRow> {
-        AggTradeRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: AggTradeRow) -> Result<()> {
-        let query = format!(
-            r#"
-            INSERT INTO {table_name} (
-                aggregate_trade_id, price, quantity, first_trade_id, 
-                last_trade_id, trade_time, is_buyer_market_maker
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (aggregate_trade_id) DO NOTHING
-            "#,
-        );
-        let _unused = sqlx::query(&query)
-            .bind(data.aggregate_trade_id)
-            .bind(data.price)
-            .bind(data.quantity)
-            .bind(data.first_trade_id)
-            .bind(data.last_trade_id)
-            .bind(data.trade_time)
-            .bind(data.is_buyer_market_maker)
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    #[allow(clippy::items_after_statements)]
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<AggTradeRow>) -> Result<()> {
-        let mut query_builder = QueryBuilder::<Postgres>::new(format!(
-            "INSERT INTO {table_name} (aggregate_trade_id, price, quantity, first_trade_id, last_trade_id, trade_time, is_buyer_market_maker) "
-        ));
-
-        let _unused = query_builder
-            .push_values(data, |mut b, row| {
-                let _unused = b
-                    .push_bind(row.aggregate_trade_id)
-                    .push_bind(row.price)
-                    .push_bind(row.quantity)
-                    .push_bind(row.first_trade_id)
-                    .push_bind(row.last_trade_id)
-                    .push_bind(row.trade_time)
-                    .push_bind(row.is_buyer_market_maker);
-            })
-            .push(" ON CONFLICT (aggregate_trade_id) DO NOTHING")
-            .build()
-            .execute(&self.client)
             .await
             .context(error::PostgresSnafu)?;
 

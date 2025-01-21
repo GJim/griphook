@@ -1,5 +1,5 @@
 use crate::{
-    database::{ClickhouseDB, Database, PostgresDB, Storage},
+    database::Storage,
     models::{
         error::{self, Result},
         Avro, ClickhouseRow,
@@ -84,113 +84,6 @@ impl TryFrom<MiniTicker> for MiniTickerRow {
             base_volume: ticker.base_volume.parse().context(error::ParseF64Snafu)?,
             quote_volume: ticker.quote_volume.parse().context(error::ParseF64Snafu)?,
         })
-    }
-}
-
-impl Database<MiniTicker, MiniTickerRow> for ClickhouseDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let query = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                event_time Int64,
-                close_price Float64,
-                open_price Float64,
-                high_price Float64,
-                low_price Float64,
-                base_volume Float64,
-                quote_volume Float64
-            ) ENGINE = MergeTree()
-            ORDER BY (event_time)
-            "#,
-        );
-        self.client.query(&query).execute().await.context(error::ClickhouseSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: MiniTicker) -> Result<MiniTickerRow> {
-        MiniTickerRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: MiniTickerRow) -> Result<()> {
-        MiniTickerRow::insert_row(&self.client, table_name, data).await
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<MiniTickerRow>) -> Result<()> {
-        MiniTickerRow::insert_row_batch(&self.client, table_name, data).await
-    }
-}
-
-impl Database<MiniTicker, MiniTickerRow> for PostgresDB {
-    async fn ensure_table_exists(&self, table_name: &str) -> Result<()> {
-        let query = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                event_time BIGINT NOT NULL,
-                close_price DOUBLE PRECISION NOT NULL,
-                open_price DOUBLE PRECISION NOT NULL,
-                high_price DOUBLE PRECISION NOT NULL,
-                low_price DOUBLE PRECISION NOT NULL,
-                base_volume DOUBLE PRECISION NOT NULL,
-                quote_volume DOUBLE PRECISION NOT NULL,
-                PRIMARY KEY (event_time)
-            )
-            "#,
-        );
-        let _unused =
-            sqlx::query(&query).execute(&self.client).await.context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn to_row(&self, data: MiniTicker) -> Result<MiniTickerRow> {
-        MiniTickerRow::try_from(data)
-    }
-
-    async fn insert_row(&self, table_name: &str, data: MiniTickerRow) -> Result<()> {
-        let query = format!(
-            r#"
-            INSERT INTO {table_name} (
-                event_time, close_price, open_price, high_price,
-                low_price, base_volume, quote_volume
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (event_time) DO NOTHING
-            "#,
-        );
-        let _unused = sqlx::query(&query)
-            .bind(data.event_time)
-            .bind(data.close_price)
-            .bind(data.open_price)
-            .bind(data.high_price)
-            .bind(data.low_price)
-            .bind(data.base_volume)
-            .bind(data.quote_volume)
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-        Ok(())
-    }
-
-    async fn insert_row_batch(&self, table_name: &str, data: Vec<MiniTickerRow>) -> Result<()> {
-        let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
-            format!("INSERT INTO {table_name} (event_time, close_price, open_price, high_price, low_price, base_volume, quote_volume) "),
-        );
-
-        let _unused = query_builder
-            .push_values(data, |mut b, row| {
-                let _unused = b
-                    .push_bind(row.event_time)
-                    .push_bind(row.close_price)
-                    .push_bind(row.open_price)
-                    .push_bind(row.high_price)
-                    .push_bind(row.low_price)
-                    .push_bind(row.base_volume)
-                    .push_bind(row.quote_volume);
-            })
-            .push(" ON CONFLICT (event_time) DO NOTHING")
-            .build()
-            .execute(&self.client)
-            .await
-            .context(error::PostgresSnafu)?;
-
-        Ok(())
     }
 }
 
