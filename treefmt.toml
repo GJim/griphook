@@ -1,6 +1,6 @@
 [formatter.rust]
-command = "cargo"
-options = ["fmt", "--all", "--verbose", "--"]
+command  = "cargo"
+options  = ["fmt", "--all", "--verbose", "--"]
 includes = ["*.rs"]
 
 [formatter.prettier]
@@ -20,8 +20,8 @@ includes = [
 ]
 
 [formatter.toml]
-command = "taplo"
-options = ["format", "$@"]
+command  = "taplo"
+options  = ["format", "$@"]
 includes = ["*.toml"]
 
 [formatter.shell]

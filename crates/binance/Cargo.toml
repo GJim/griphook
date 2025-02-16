@@ -1,37 +1,37 @@
 [package]
-name = "griphook-binance"
-description = "Binance"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-homepage.workspace = true
-repository.workspace = true
-readme.workspace = true
-license.workspace = true
+name                   = "griphook-binance"
+description            = "Binance"
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+homepage.workspace     = true
+repository.workspace   = true
+readme.workspace       = true
+license.workspace      = true
 rust-version.workspace = true
-categories.workspace = true
-keywords.workspace = true
-publish.workspace = true
+categories.workspace   = true
+keywords.workspace     = true
+publish.workspace      = true
 
 [dependencies]
-serde = { workspace = true }
+serde      = { workspace = true }
 serde_json = { workspace = true }
 
-futures = { workspace = true }
+futures      = { workspace = true }
 futures-util = { workspace = true }
 
-tokio = { workspace = true }
-tokio-stream = { workspace = true }
-tokio-tungstenite = { workspace = true }
+tokio                   = { workspace = true }
+tokio-stream            = { workspace = true }
+tokio-tungstenite       = { workspace = true }
 tokio-graceful-shutdown = { workspace = true }
 
 tracing = { workspace = true }
 
-avro-rs = { workspace = true }
+avro-rs    = { workspace = true }
 clickhouse = { workspace = true }
-http = { workspace = true }
-rdkafka = { workspace = true }
-sqlx = { workspace = true }
+http       = { workspace = true }
+rdkafka    = { workspace = true }
+sqlx       = { workspace = true }
 
 snafu = { workspace = true }
 
