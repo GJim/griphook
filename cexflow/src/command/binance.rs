@@ -208,111 +208,102 @@ impl Commands {
                 .await
                 .context(error::ShutdownTokioRuntimeSnafu)
             }
-            Self::Sink { offset_reset } => Toplevel::new(move |s| async move {
-                let result: Result<(), Error> = async {
-                    let sinkers = config.binance.sinkers;
+            Self::Sink { offset_reset } => Toplevel::new(|s| async move {
+                let sinkers = config.binance.sinkers;
 
-                    // Split sinkers by storage type
-                    let clickhouse_sinkers = sinkers
-                        .clone()
-                        .into_iter()
-                        .filter(|sinker| matches!(sinker.storage, Storage::Clickhouse))
-                        .collect::<Vec<_>>();
+                // Split sinkers by storage type
+                let clickhouse_sinkers = sinkers
+                    .clone()
+                    .into_iter()
+                    .filter(|sinker| matches!(sinker.storage, Storage::Clickhouse))
+                    .collect::<Vec<_>>();
 
-                    let postgres_sinkers = sinkers
-                        .into_iter()
-                        .filter(|sinker| matches!(sinker.storage, Storage::Postgres))
-                        .collect::<Vec<_>>();
+                let postgres_sinkers = sinkers
+                    .into_iter()
+                    .filter(|sinker| matches!(sinker.storage, Storage::Postgres))
+                    .collect::<Vec<_>>();
 
-                    // Initialize ClickHouse subsystem if needed
-                    if !clickhouse_sinkers.is_empty() {
-                        let (tx, rx) = tokio::sync::mpsc::channel::<DatabaseMessage>(10);
-                        let clickhouse_client = config.clickhouse.create_client();
+                // Initialize ClickHouse subsystem if needed
+                if !clickhouse_sinkers.is_empty() {
+                    let (tx, rx) = tokio::sync::mpsc::channel::<DatabaseMessage>(10);
+                    let clickhouse_client = config.clickhouse.create_client();
 
-                        // Start ClickHouse manager as parent subsystem
-                        let kafka_config = config.kafka.clone();
-                        let kafka_offset_reset = offset_reset.clone();
-                        let _unused = s.start(SubsystemBuilder::new(
-                            "binance-clickhouse-manager",
-                            move |clickhouse_handle| async move {
-                                // Start individual ClickHouse sinkers as child subsystems
-                                for sinker in clickhouse_sinkers {
-                                    let table_name = sinker.topic.replace('.', "_");
-                                    let consumer = kafka_config
-                                        .create_consumer(
-                                            kafka_offset_reset.as_ref(),
-                                            Some("clickhouse".to_string()),
+                    // Start ClickHouse manager as parent subsystem
+                    let kafka_config = config.kafka.clone();
+                    let kafka_offset_reset = offset_reset.clone();
+                    let _unused = s.start(SubsystemBuilder::new(
+                        "binance-clickhouse-manager",
+                        move |clickhouse_handle| async move {
+                            // Start individual ClickHouse sinkers as child subsystems
+                            for sinker in clickhouse_sinkers {
+                                let table_name = sinker.topic.replace('.', "_");
+                                let consumer = kafka_config
+                                    .create_consumer(
+                                        kafka_offset_reset.as_ref(),
+                                        Some("clickhouse".to_string()),
+                                    )
+                                    .context(error::ConfigSnafu)?;
+
+                                let sink = Sink::new(tx.clone(), consumer, table_name);
+                                let _unused = clickhouse_handle.start(SubsystemBuilder::new(
+                                    format!("binance-{}-clickhouse-sinker", sinker.topic),
+                                    move |h| {
+                                        sink.run(
+                                            sinker.topic,
+                                            DatabaseType::from(sinker.storage),
+                                            sinker.batch_size,
+                                            Duration::from_secs(sinker.batch_timeout),
+                                            h,
                                         )
-                                        .context(error::ConfigSnafu)?;
-
-                                    let sink = Sink::new(tx.clone(), consumer, table_name);
-                                    let _unused = clickhouse_handle.start(SubsystemBuilder::new(
-                                        format!("binance-{}-clickhouse-sinker", sinker.topic),
-                                        move |h| {
-                                            sink.run(
-                                                sinker.topic,
-                                                DatabaseType::from(sinker.storage),
-                                                sinker.batch_size,
-                                                Duration::from_secs(sinker.batch_timeout),
-                                                h,
-                                            )
-                                        },
-                                    ));
-                                }
-                                ClickhouseManager::new_client(clickhouse_client)
-                                    .run(rx, clickhouse_handle)
-                                    .await
-                                    .context(error::BinanceSnafu)
-                            },
-                        ));
-                    }
-
-                    // Initialize Postgres subsystem if needed
-                    if !postgres_sinkers.is_empty() {
-                        let (tx, rx) = tokio::sync::mpsc::channel::<DatabaseMessage>(10);
-                        let postgres_client =
-                            config.postgres.create_pool().await.context(error::ConfigSnafu)?;
-
-                        // Start Postgres manager as parent subsystem
-                        let _unused = s.start(SubsystemBuilder::new(
-                            "binance-postgres-manager",
-                            move |postgres_handle| async move {
-                                // Start individual Postgres sinkers as child subsystems
-                                for sinker in postgres_sinkers {
-                                    let table_name = sinker.topic.replace('.', "_");
-                                    let consumer = config.kafka.create_consumer(
-                                        offset_reset.as_ref(),
-                                        Some("postgres".to_string()),
-                                    )?;
-
-                                    let sink = Sink::new(tx.clone(), consumer, table_name);
-                                    let _unused = postgres_handle.start(SubsystemBuilder::new(
-                                        format!("binance-{}-postgres-sinker", sinker.topic),
-                                        move |h| {
-                                            sink.run(
-                                                sinker.topic,
-                                                DatabaseType::from(sinker.storage),
-                                                sinker.batch_size,
-                                                Duration::from_secs(sinker.batch_timeout),
-                                                h,
-                                            )
-                                        },
-                                    ));
-                                }
-                                PostgresManager::new_pool(postgres_client)
-                                    .run(rx, postgres_handle)
-                                    .await
-                                    .context(error::BinanceSnafu)
-                            },
-                        ));
-                    }
-
-                    Ok(())
+                                    },
+                                ));
+                            }
+                            ClickhouseManager::new_client(clickhouse_client)
+                                .run(rx, clickhouse_handle)
+                                .await
+                                .context(error::BinanceSnafu)
+                        },
+                    ));
                 }
-                .await;
 
-                if let Err(e) = result {
-                    tracing::error!("Error in Toplevel::new: {}", e);
+                // Initialize Postgres subsystem if needed
+                if !postgres_sinkers.is_empty() {
+                    let (tx, rx) = tokio::sync::mpsc::channel::<DatabaseMessage>(10);
+
+                    // Start Postgres manager as parent subsystem
+                    let _unused = s.start(SubsystemBuilder::new(
+                        "binance-postgres-manager",
+                        move |postgres_handle| async move {
+                            // Start individual Postgres sinkers as child subsystems
+                            for sinker in postgres_sinkers {
+                                let table_name = sinker.topic.replace('.', "_");
+                                let consumer = config.kafka.create_consumer(
+                                    offset_reset.as_ref(),
+                                    Some("postgres".to_string()),
+                                )?;
+
+                                let sink = Sink::new(tx.clone(), consumer, table_name);
+                                let _unused = postgres_handle.start(SubsystemBuilder::new(
+                                    format!("binance-{}-postgres-sinker", sinker.topic),
+                                    move |h| {
+                                        sink.run(
+                                            sinker.topic,
+                                            DatabaseType::from(sinker.storage),
+                                            sinker.batch_size,
+                                            Duration::from_secs(sinker.batch_timeout),
+                                            h,
+                                        )
+                                    },
+                                ));
+                            }
+                            let postgres_client =
+                                config.postgres.create_pool().await.context(error::ConfigSnafu)?;
+                            PostgresManager::new_pool(postgres_client)
+                                .run(rx, postgres_handle)
+                                .await
+                                .context(error::BinanceSnafu)
+                        },
+                    ));
                 }
             })
             .catch_signals()
