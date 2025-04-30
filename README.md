@@ -1,5 +1,23 @@
 # Griphook
 
+Griphook is a powerful toolkit for cryptocurrency trading and data analysis. It provides a robust infrastructure for connecting to cryptocurrency exchanges (currently focusing on Binance), streaming real-time market data, and storing it in various databases for analysis.
+
+## Features
+
+- **Real-time Data Streaming**: Connect to Binance WebSocket API to stream various market data types including trades, order books, klines, tickers, and more
+- **Data Processing Pipeline**: Utilize Kafka for reliable message queuing and processing
+- **Flexible Storage Options**: Store data in Clickhouse or PostgreSQL depending on your analytical needs
+- **Command-line Interface**: Easy-to-use CLI for managing streams, inspecting data, and configuring the system
+- **Multiple Trading Types**: Support for Spot, USD Futures, and COIN Futures markets
+- **Configurable**: Extensive YAML-based configuration system
+
+## Architecture
+
+Griphook follows a modular architecture with the following components:
+- **cexflow**: Main CLI application for interacting with exchange data flows
+- **crates/base**: Core utilities and common functionality
+- **crates/binance**: Binance-specific implementations for data streaming and processing
+
 ### Commands
 
 - create a cexflow config file
@@ -26,7 +44,7 @@ cargo run --bin cexflow -- binance inspect binance.btcusdt.ticker -o earliest
 cargo run --bin cexflow -- binance sink binance.btcusdt.ticker -o earliest -s postgres
 ```
 
-## Kafka
+## Kafka installation
 
 - [confluentinc-config](https://github.com/confluentinc/cp-all-in-one/blob/7.8.0-post/cp-all-in-one-community/docker-compose.yml)
   > remove `connect` `ksql-datagen`
@@ -51,7 +69,7 @@ kafka-consumer-groups --bootstrap-server localhost:9092 --all-groups --describe
 kafka-consumer-groups --bootstrap-server localhost:9092 --delete --group griphook
 ```
 
-## Clickhouse
+## Clickhouse installation
 
 - Run Database service
 
